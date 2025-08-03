@@ -52,22 +52,24 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 use wechat_pub_rs::WeChatClient;
 
-/// Command line arguments for the WeChat uploader.
-///
-/// This struct defines the CLI interface using clap. Currently supports
-/// a single positional argument for the path to upload.
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(
+    author,
+    version,
+    about = "A tool to upload articles to WeChat Official Account",
+    after_help = "REQUIREMENTS: Set WECHAT_APP_ID and WECHAT_APP_SECRET environment variables\n\nTHEMING: Supports 8 themes and 10 code highlighters via frontmatter:\n  ---\n  title: \"My Article\"\n  theme: \"lapis\"        # Themes: default, lapis, maize, orangeheart, phycat, pie, purple, rainbow\n  code: \"github\"        # Highlighters: github, github-dark, vscode, atom-one-light, atom-one-dark, solarized-light, solarized-dark, monokai, dracula, xcode\n  published: \"draft\"\n  ---\n\nEXAMPLES:\n  wx-uploader article.md      # Upload single file (force)\n  wx-uploader ./articles/     # Process directory (skip published)\n  wx-uploader -v ./blog/      # Verbose logging"
+)]
 struct Args {
-    /// Path to markdown file or directory to upload.
-    ///
-    /// If a file is provided, it will be uploaded regardless of its published status.
-    /// If a directory is provided, all markdown files will be processed recursively,
-    /// but already published files (where `published: "true"`) will be skipped.
+    #[arg(
+        help = "Path to markdown file or directory to upload. Files uploaded regardless of status. Directories skip published files. Set theme and code highlighter in frontmatter - see help for complete lists."
+    )]
     path: PathBuf,
 
-    /// Enable verbose logging with detailed tracing information
-    #[arg(short, long)]
+    #[arg(
+        short,
+        long,
+        help = "Enable verbose logging with detailed tracing information"
+    )]
     verbose: bool,
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "wx-uploader"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["tyr.chen@gmail.com"]
 license = "MIT"
@@ -23,7 +23,7 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 tokio = { version = "1", features = ["full"] }
 walkdir = "2"
-wechat-pub-rs = "0.3"
+wechat-pub-rs = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
