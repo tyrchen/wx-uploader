@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.1] - 2025-12-27
+
+### 🐛 Bug Fixes
+
+- Crop cover image to WeChat 2.35:1 ratio before upload
+- Create temp markdown in same dir as original
+- Use absolute path for temp markdown file
+- Use tempfile crate for proper temp file management
+- Put both temp files in system temp dir
+
+### ⚙️ Miscellaneous Tasks
+
+- Use gpt-image-1.5
+
 ## [0.6.0] - 2025-09-13
 
 ### ⚙️ Miscellaneous Tasks
