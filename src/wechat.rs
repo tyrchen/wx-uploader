@@ -111,9 +111,33 @@ fn crop_cover_to_temp(image_path: &Path) -> Result<Option<NamedTempFile>> {
     Ok(Some(temp_file))
 }
 
+/// Converts relative image paths in markdown body to absolute paths.
+fn make_image_paths_absolute(body: &str, base_dir: &Path) -> String {
+    use regex::Regex;
+
+    // Match markdown image syntax: ![alt](path)
+    let re = Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)").unwrap();
+
+    re.replace_all(body, |caps: &regex::Captures| {
+        let alt = &caps[1];
+        let path = &caps[2];
+
+        // Skip URLs and already absolute paths
+        if path.starts_with("http://") || path.starts_with("https://") || path.starts_with('/') {
+            return caps[0].to_string();
+        }
+
+        // Convert relative path to absolute
+        let abs_path = base_dir.join(path);
+        format!("![{}]({})", alt, abs_path.display())
+    })
+    .to_string()
+}
+
 /// Prepares temp files for WeChat upload with cropped cover.
 ///
-/// Returns TempUploadFiles which keeps the files alive until dropped.
+/// Both files are created in the system temp directory.
+/// Image paths in the markdown are converted to absolute paths.
 fn prepare_upload_files(
     markdown_path: &Path,
     frontmatter: &Frontmatter,
@@ -130,13 +154,13 @@ fn prepare_upload_files(
         return Ok(None);
     }
 
-    // Crop cover to temp file
+    // Crop cover to temp file (in system temp dir)
     let Some(temp_cover) = crop_cover_to_temp(&cover_path)? else {
         // No cropping needed, use original files
         return Ok(None);
     };
 
-    // Get absolute path for markdown directory (so relative image paths work)
+    // Get absolute markdown directory for resolving relative image paths
     let abs_markdown_path = markdown_path
         .canonicalize()
         .map_err(|e| Error::generic(format!("Failed to canonicalize markdown path: {}", e)))?;
@@ -144,17 +168,20 @@ fn prepare_upload_files(
         .parent()
         .ok_or_else(|| Error::generic("Markdown file has no parent directory"))?;
 
-    // Create temp markdown in the same directory as original (so relative paths work)
+    // Create temp markdown in system temp dir with absolute image paths
     let mut temp_frontmatter = frontmatter.clone();
     temp_frontmatter.set_cover(temp_cover.path().to_string_lossy().to_string());
 
+    // Convert relative image paths to absolute
+    let body_with_abs_paths = make_image_paths_absolute(body, markdown_dir);
+
     let mut temp_markdown = tempfile::Builder::new()
-        .prefix(".wx_upload_")
+        .prefix("wx_upload_")
         .suffix(".md")
-        .tempfile_in(markdown_dir)
+        .tempfile()
         .map_err(|e| Error::generic(format!("Failed to create temp markdown file: {}", e)))?;
 
-    let temp_content = crate::markdown::format_markdown(&temp_frontmatter, body)?;
+    let temp_content = crate::markdown::format_markdown(&temp_frontmatter, &body_with_abs_paths)?;
     temp_markdown
         .write_all(temp_content.as_bytes())
         .map_err(|e| Error::generic(format!("Failed to write temp markdown: {}", e)))?;
