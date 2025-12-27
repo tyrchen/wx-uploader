@@ -284,7 +284,7 @@ impl PromptBuilder for OpenAIClient {
 impl ImageGenerator for OpenAIClient {
     async fn generate_image(&self, prompt: &str) -> Result<String> {
         let request_body = json!({
-            "model": "gpt-image-1",
+            "model": "gpt-image-1.5",
             "prompt": prompt,
             "size": "1536x1024",  // Close to 16:9 aspect ratio
             "quality": "high",

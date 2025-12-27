@@ -84,7 +84,7 @@ When the `OPENAI_API_KEY` environment variable is set, the tool will automatical
 
 1. **Content Analysis**: GPT-5-mini analyzes your markdown content to create a vivid scene description
 2. **Prompt Generation**: Creates an optimized prompt for image generation focusing on Studio Ghibli-style artwork
-3. **Image Generation**: gpt-image-1 generates a high-quality 16:9 aspect ratio cover image
+3. **Image Generation**: gpt-image-1.5 generates a high-quality 16:9 aspect ratio cover image
 4. **Auto-Save**: Downloads and saves the image in the same directory as your markdown file
 5. **Metadata Update**: Updates your frontmatter with the generated cover filename
 

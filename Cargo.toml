@@ -1,6 +1,6 @@
 [package]
 name = "wx-uploader"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 authors = ["tyr.chen@gmail.com"]
 license = "MIT"
