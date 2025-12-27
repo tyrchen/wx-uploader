@@ -128,11 +128,18 @@ fn prepare_upload_files(
         return Ok(None);
     };
 
+    // Get absolute path for markdown directory (so temp file can be found reliably)
+    let abs_markdown_path = markdown_path
+        .canonicalize()
+        .map_err(|e| Error::generic(format!("Failed to canonicalize markdown path: {}", e)))?;
+    let markdown_dir = abs_markdown_path
+        .parent()
+        .ok_or_else(|| Error::generic("Markdown file has no parent directory"))?;
+
     // Create temp markdown in the same directory as original (so relative paths work)
     let mut temp_frontmatter = frontmatter.clone();
     temp_frontmatter.set_cover(temp_cover_path.to_string_lossy().to_string());
 
-    let markdown_dir = markdown_path.parent().unwrap_or_else(|| Path::new("."));
     let temp_markdown_path = markdown_dir.join(format!(
         ".wx_upload_{}_{}.md",
         std::process::id(),
@@ -140,7 +147,7 @@ fn prepare_upload_files(
     ));
 
     let temp_content = crate::markdown::format_markdown(&temp_frontmatter, body)?;
-    std::fs::write(&temp_markdown_path, temp_content)
+    std::fs::write(&temp_markdown_path, &temp_content)
         .map_err(|e| Error::generic(format!("Failed to write temp markdown: {}", e)))?;
 
     info!(
