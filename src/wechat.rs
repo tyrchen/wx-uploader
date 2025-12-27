@@ -8,12 +8,148 @@ use crate::markdown::{parse_markdown_file, update_frontmatter, write_markdown_fi
 use crate::models::Frontmatter;
 use crate::openai::OpenAIClient;
 use crate::output::{FORMATTER, FilePathFormatter, OutputFormatter};
+use image::GenericImageView;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 use walkdir::WalkDir;
 
+/// WeChat cover image aspect ratio (2.35:1)
+const WECHAT_COVER_ASPECT_RATIO: f64 = 2.35;
+
 // Re-export the WeChat client type
 pub use wechat_pub_rs::WeChatClient;
+
+/// Crops an image to WeChat cover aspect ratio (2.35:1) and saves to a temp file.
+///
+/// This function reads the original image, crops it to the required aspect ratio,
+/// and saves it to a temporary file. The original image is not modified.
+///
+/// # Arguments
+///
+/// * `image_path` - Path to the original image file
+///
+/// # Returns
+///
+/// Path to the temporary cropped image file, or None if no cropping was needed
+fn crop_cover_to_temp(image_path: &Path) -> Result<Option<PathBuf>> {
+    use image::ImageReader;
+    use std::io::Cursor;
+
+    // Read the image file
+    let image_bytes = std::fs::read(image_path)
+        .map_err(|e| Error::generic(format!("Failed to read image file: {}", e)))?;
+
+    let img = ImageReader::new(Cursor::new(&image_bytes))
+        .with_guessed_format()
+        .map_err(|e| Error::generic(format!("Failed to read image format: {}", e)))?
+        .decode()
+        .map_err(|e| Error::generic(format!("Failed to decode image: {}", e)))?;
+
+    let (width, height) = img.dimensions();
+    let current_ratio = width as f64 / height as f64;
+
+    // If already at or wider than 2.35:1, no cropping needed
+    if current_ratio >= WECHAT_COVER_ASPECT_RATIO {
+        info!(
+            "Image already at or wider than 2.35:1 ratio (current: {:.2}:1), skipping crop",
+            current_ratio
+        );
+        return Ok(None);
+    }
+
+    // Calculate new height for 2.35:1 ratio, keeping width
+    let new_height = (width as f64 / WECHAT_COVER_ASPECT_RATIO).round() as u32;
+
+    // Center crop vertically
+    let y_offset = (height - new_height) / 2;
+
+    info!(
+        "Cropping cover image from {}x{} to {}x{} (2.35:1 ratio for WeChat)",
+        width, height, width, new_height
+    );
+
+    let cropped = img.crop_imm(0, y_offset, width, new_height);
+
+    // Create temp file with same extension as original
+    let extension = image_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("jpg");
+    let temp_path = std::env::temp_dir().join(format!(
+        "wx_cover_{}_{}.{}",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple(),
+        extension
+    ));
+
+    // Determine output format based on file extension
+    let format = match extension {
+        "png" => image::ImageFormat::Png,
+        "jpg" | "jpeg" => image::ImageFormat::Jpeg,
+        "webp" => image::ImageFormat::WebP,
+        _ => image::ImageFormat::Jpeg,
+    };
+
+    // Encode and save to temp file
+    let mut output = Cursor::new(Vec::new());
+    cropped
+        .write_to(&mut output, format)
+        .map_err(|e| Error::generic(format!("Failed to encode cropped image: {}", e)))?;
+
+    std::fs::write(&temp_path, output.into_inner())
+        .map_err(|e| Error::generic(format!("Failed to write temp cropped image: {}", e)))?;
+
+    info!("Created temp cropped cover at: {}", temp_path.display());
+    Ok(Some(temp_path))
+}
+
+/// Prepares a markdown file for WeChat upload by creating temp files with cropped cover.
+///
+/// Returns paths to temp files that should be cleaned up after upload.
+fn prepare_upload_files(
+    markdown_path: &Path,
+    frontmatter: &Frontmatter,
+    body: &str,
+) -> Result<Option<(PathBuf, PathBuf)>> {
+    // Check if there's a cover to process
+    let Some(cover_filename) = &frontmatter.cover else {
+        return Ok(None);
+    };
+
+    // Resolve cover path
+    let (cover_path, exists) = resolve_and_check_cover_path(markdown_path, cover_filename);
+    if !exists {
+        return Ok(None);
+    }
+
+    // Crop cover to temp file
+    let Some(temp_cover_path) = crop_cover_to_temp(&cover_path)? else {
+        // No cropping needed, use original files
+        return Ok(None);
+    };
+
+    // Create temp markdown with updated cover path pointing to temp cropped image
+    let mut temp_frontmatter = frontmatter.clone();
+    temp_frontmatter.set_cover(temp_cover_path.to_string_lossy().to_string());
+
+    let temp_markdown_path = std::env::temp_dir().join(format!(
+        "wx_article_{}_{}.md",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ));
+
+    let temp_content = crate::markdown::format_markdown(&temp_frontmatter, body)?;
+    std::fs::write(&temp_markdown_path, temp_content)
+        .map_err(|e| Error::generic(format!("Failed to write temp markdown: {}", e)))?;
+
+    info!(
+        "Created temp markdown at: {} with cover: {}",
+        temp_markdown_path.display(),
+        temp_cover_path.display()
+    );
+
+    Ok(Some((temp_markdown_path, temp_cover_path)))
+}
 
 /// Trait for uploading content to WeChat
 #[async_trait::async_trait]
@@ -215,8 +351,33 @@ pub async fn upload_file(
         }
     }
 
+    // Prepare temp files with cropped cover for upload
+    let temp_files = prepare_upload_files(path, &frontmatter, &body)?;
+
+    // Use temp markdown if available, otherwise use original
+    let upload_path = temp_files
+        .as_ref()
+        .map(|(md, _)| md.as_path())
+        .unwrap_or(path);
+
     // Execute the WeChat upload
-    execute_wechat_upload(client, path, verbose).await?;
+    let upload_result = execute_wechat_upload(client, upload_path, verbose).await;
+
+    // Clean up temp files regardless of upload result
+    if let Some((temp_md, temp_cover)) = temp_files {
+        if let Err(e) = std::fs::remove_file(&temp_md) {
+            warn!("Failed to clean up temp markdown: {}", e);
+        }
+        if let Err(e) = std::fs::remove_file(&temp_cover) {
+            warn!("Failed to clean up temp cover: {}", e);
+        }
+        if verbose {
+            info!("Cleaned up temp files");
+        }
+    }
+
+    // Propagate upload error after cleanup
+    upload_result?;
 
     // Update the file with published status
     update_published_status(path, verbose).await?;
