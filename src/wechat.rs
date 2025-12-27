@@ -19,19 +19,21 @@ const WECHAT_COVER_ASPECT_RATIO: f64 = 2.35;
 // Re-export the WeChat client type
 pub use wechat_pub_rs::WeChatClient;
 
+use std::io::Write;
+use tempfile::NamedTempFile;
+
+/// Holds temporary files for upload, automatically cleaned up when dropped.
+pub struct TempUploadFiles {
+    /// Temp markdown file (in same dir as original for relative path resolution)
+    pub markdown: NamedTempFile,
+    /// Temp cropped cover image (in system temp dir)
+    pub cover: NamedTempFile,
+}
+
 /// Crops an image to WeChat cover aspect ratio (2.35:1) and saves to a temp file.
 ///
-/// This function reads the original image, crops it to the required aspect ratio,
-/// and saves it to a temporary file. The original image is not modified.
-///
-/// # Arguments
-///
-/// * `image_path` - Path to the original image file
-///
-/// # Returns
-///
-/// Path to the temporary cropped image file, or None if no cropping was needed
-fn crop_cover_to_temp(image_path: &Path) -> Result<Option<PathBuf>> {
+/// Returns a NamedTempFile handle, or None if no cropping was needed.
+fn crop_cover_to_temp(image_path: &Path) -> Result<Option<NamedTempFile>> {
     use image::ImageReader;
     use std::io::Cursor;
 
@@ -70,19 +72,11 @@ fn crop_cover_to_temp(image_path: &Path) -> Result<Option<PathBuf>> {
 
     let cropped = img.crop_imm(0, y_offset, width, new_height);
 
-    // Create temp file with same extension as original
+    // Determine output format and extension based on original file
     let extension = image_path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("jpg");
-    let temp_path = std::env::temp_dir().join(format!(
-        "wx_cover_{}_{}.{}",
-        std::process::id(),
-        uuid::Uuid::new_v4().simple(),
-        extension
-    ));
-
-    // Determine output format based on file extension
     let format = match extension {
         "png" => image::ImageFormat::Png,
         "jpg" | "jpeg" => image::ImageFormat::Jpeg,
@@ -90,27 +84,41 @@ fn crop_cover_to_temp(image_path: &Path) -> Result<Option<PathBuf>> {
         _ => image::ImageFormat::Jpeg,
     };
 
-    // Encode and save to temp file
+    // Create temp file in system temp dir
+    let mut temp_file = tempfile::Builder::new()
+        .prefix("wx_cover_")
+        .suffix(&format!(".{}", extension))
+        .tempfile()
+        .map_err(|e| Error::generic(format!("Failed to create temp cover file: {}", e)))?;
+
+    // Encode and write to temp file
     let mut output = Cursor::new(Vec::new());
     cropped
         .write_to(&mut output, format)
         .map_err(|e| Error::generic(format!("Failed to encode cropped image: {}", e)))?;
 
-    std::fs::write(&temp_path, output.into_inner())
+    temp_file
+        .write_all(&output.into_inner())
         .map_err(|e| Error::generic(format!("Failed to write temp cropped image: {}", e)))?;
+    temp_file
+        .flush()
+        .map_err(|e| Error::generic(format!("Failed to flush temp file: {}", e)))?;
 
-    info!("Created temp cropped cover at: {}", temp_path.display());
-    Ok(Some(temp_path))
+    info!(
+        "Created temp cropped cover at: {}",
+        temp_file.path().display()
+    );
+    Ok(Some(temp_file))
 }
 
-/// Prepares a markdown file for WeChat upload by creating temp files with cropped cover.
+/// Prepares temp files for WeChat upload with cropped cover.
 ///
-/// Returns paths to temp files that should be cleaned up after upload.
+/// Returns TempUploadFiles which keeps the files alive until dropped.
 fn prepare_upload_files(
     markdown_path: &Path,
     frontmatter: &Frontmatter,
     body: &str,
-) -> Result<Option<(PathBuf, PathBuf)>> {
+) -> Result<Option<TempUploadFiles>> {
     // Check if there's a cover to process
     let Some(cover_filename) = &frontmatter.cover else {
         return Ok(None);
@@ -123,12 +131,12 @@ fn prepare_upload_files(
     }
 
     // Crop cover to temp file
-    let Some(temp_cover_path) = crop_cover_to_temp(&cover_path)? else {
+    let Some(temp_cover) = crop_cover_to_temp(&cover_path)? else {
         // No cropping needed, use original files
         return Ok(None);
     };
 
-    // Get absolute path for markdown directory (so temp file can be found reliably)
+    // Get absolute path for markdown directory (so relative image paths work)
     let abs_markdown_path = markdown_path
         .canonicalize()
         .map_err(|e| Error::generic(format!("Failed to canonicalize markdown path: {}", e)))?;
@@ -138,25 +146,32 @@ fn prepare_upload_files(
 
     // Create temp markdown in the same directory as original (so relative paths work)
     let mut temp_frontmatter = frontmatter.clone();
-    temp_frontmatter.set_cover(temp_cover_path.to_string_lossy().to_string());
+    temp_frontmatter.set_cover(temp_cover.path().to_string_lossy().to_string());
 
-    let temp_markdown_path = markdown_dir.join(format!(
-        ".wx_upload_{}_{}.md",
-        std::process::id(),
-        uuid::Uuid::new_v4().simple()
-    ));
+    let mut temp_markdown = tempfile::Builder::new()
+        .prefix(".wx_upload_")
+        .suffix(".md")
+        .tempfile_in(markdown_dir)
+        .map_err(|e| Error::generic(format!("Failed to create temp markdown file: {}", e)))?;
 
     let temp_content = crate::markdown::format_markdown(&temp_frontmatter, body)?;
-    std::fs::write(&temp_markdown_path, &temp_content)
+    temp_markdown
+        .write_all(temp_content.as_bytes())
         .map_err(|e| Error::generic(format!("Failed to write temp markdown: {}", e)))?;
+    temp_markdown
+        .flush()
+        .map_err(|e| Error::generic(format!("Failed to flush temp markdown: {}", e)))?;
 
     info!(
-        "Created temp markdown at: {} with cover: {}",
-        temp_markdown_path.display(),
-        temp_cover_path.display()
+        "Created temp files - markdown: {}, cover: {}",
+        temp_markdown.path().display(),
+        temp_cover.path().display()
     );
 
-    Ok(Some((temp_markdown_path, temp_cover_path)))
+    Ok(Some(TempUploadFiles {
+        markdown: temp_markdown,
+        cover: temp_cover,
+    }))
 }
 
 /// Trait for uploading content to WeChat
@@ -360,29 +375,20 @@ pub async fn upload_file(
     }
 
     // Prepare temp files with cropped cover for upload
+    // The TempUploadFiles struct keeps files alive until dropped
     let temp_files = prepare_upload_files(path, &frontmatter, &body)?;
 
     // Use temp markdown if available, otherwise use original
     let upload_path = temp_files
         .as_ref()
-        .map(|(md, _)| md.as_path())
+        .map(|tf| tf.markdown.path())
         .unwrap_or(path);
 
     // Execute the WeChat upload
     let upload_result = execute_wechat_upload(client, upload_path, verbose).await;
 
-    // Clean up temp files regardless of upload result
-    if let Some((temp_md, temp_cover)) = temp_files {
-        if let Err(e) = std::fs::remove_file(&temp_md) {
-            warn!("Failed to clean up temp markdown: {}", e);
-        }
-        if let Err(e) = std::fs::remove_file(&temp_cover) {
-            warn!("Failed to clean up temp cover: {}", e);
-        }
-        if verbose {
-            info!("Cleaned up temp files");
-        }
-    }
+    // Temp files are automatically cleaned up when temp_files is dropped
+    drop(temp_files);
 
     // Propagate upload error after cleanup
     upload_result?;
