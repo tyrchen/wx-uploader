@@ -128,12 +128,13 @@ fn prepare_upload_files(
         return Ok(None);
     };
 
-    // Create temp markdown with updated cover path pointing to temp cropped image
+    // Create temp markdown in the same directory as original (so relative paths work)
     let mut temp_frontmatter = frontmatter.clone();
     temp_frontmatter.set_cover(temp_cover_path.to_string_lossy().to_string());
 
-    let temp_markdown_path = std::env::temp_dir().join(format!(
-        "wx_article_{}_{}.md",
+    let markdown_dir = markdown_path.parent().unwrap_or_else(|| Path::new("."));
+    let temp_markdown_path = markdown_dir.join(format!(
+        ".wx_upload_{}_{}.md",
         std::process::id(),
         uuid::Uuid::new_v4().simple()
     ));
