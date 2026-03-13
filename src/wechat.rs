@@ -4,8 +4,9 @@
 //! markdown articles with automatic cover image generation and frontmatter management.
 
 use crate::error::{Error, Result};
+use crate::gemini::GeminiClient;
 use crate::markdown::{parse_markdown_file, update_frontmatter, write_markdown_file};
-use crate::models::Frontmatter;
+use crate::models::{Config, Frontmatter};
 use crate::openai::OpenAIClient;
 use crate::output::{FORMATTER, FilePathFormatter, OutputFormatter};
 use image::GenericImageView;
@@ -208,25 +209,6 @@ pub trait WeChatUploader {
     async fn upload(&self, file_path: &str) -> Result<String>;
 }
 
-/// Trait for processing cover images
-#[async_trait::async_trait]
-pub trait CoverImageProcessor {
-    /// Resolves and checks if a cover image exists
-    async fn resolve_cover_path(
-        &self,
-        markdown_path: &Path,
-        cover_filename: &str,
-    ) -> (PathBuf, bool);
-
-    /// Generates a cover image if missing
-    async fn ensure_cover_image(
-        &self,
-        content: &str,
-        markdown_path: &Path,
-        cover_filename: Option<&str>,
-    ) -> Result<Option<String>>;
-}
-
 /// Default implementation of WeChat uploader
 #[async_trait::async_trait]
 impl WeChatUploader for WeChatClient {
@@ -237,109 +219,97 @@ impl WeChatUploader for WeChatClient {
     }
 }
 
-/// Default cover image processor implementation
-pub struct DefaultCoverImageProcessor<'a> {
-    openai_client: Option<&'a OpenAIClient>,
+/// Image generation backend, resolved per-file from frontmatter model field
+#[derive(Debug)]
+enum ImageBackend {
+    Gemini(GeminiClient),
+    OpenAI(OpenAIClient),
 }
 
-impl<'a> DefaultCoverImageProcessor<'a> {
-    pub fn new(openai_client: Option<&'a OpenAIClient>) -> Self {
-        Self { openai_client }
-    }
-}
-
-#[async_trait::async_trait]
-impl CoverImageProcessor for DefaultCoverImageProcessor<'_> {
-    async fn resolve_cover_path(
-        &self,
-        markdown_path: &Path,
-        cover_filename: &str,
-    ) -> (PathBuf, bool) {
-        resolve_and_check_cover_path(markdown_path, cover_filename)
-    }
-
-    async fn ensure_cover_image(
+impl ImageBackend {
+    /// Generate a cover image with auto-generated filename
+    async fn generate_cover_image(
         &self,
         content: &str,
-        markdown_path: &Path,
-        cover_filename: Option<&str>,
-    ) -> Result<Option<String>> {
-        let Some(openai_client) = self.openai_client else {
-            return Ok(None);
-        };
-
-        match cover_filename {
-            None => {
-                // Generate with auto filename
-                let base_filename = markdown_path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("article");
-
-                match openai_client
-                    .generate_cover_image(content, markdown_path, base_filename)
+        file_path: &Path,
+        base_filename: &str,
+    ) -> Result<String> {
+        match self {
+            Self::Gemini(client) => {
+                client
+                    .generate_cover_image(content, file_path, base_filename)
                     .await
-                {
-                    Ok(cover_filename) => Ok(Some(cover_filename)),
-                    Err(e) => {
-                        warn!(
-                            "Failed to generate cover image: {}. Continuing without cover.",
-                            e
-                        );
-                        Ok(None)
-                    }
-                }
             }
-            Some(filename) => {
-                // Generate to the specified path from frontmatter
-                let (target_cover_path, exists) =
-                    self.resolve_cover_path(markdown_path, filename).await;
+            Self::OpenAI(client) => {
+                client
+                    .generate_cover_image(content, file_path, base_filename)
+                    .await
+            }
+        }
+    }
 
-                if !exists {
-                    match openai_client
-                        .generate_cover_image_to_path(content, markdown_path, &target_cover_path)
-                        .await
-                    {
-                        Ok(()) => Ok(Some(filename.to_string())),
-                        Err(e) => {
-                            warn!(
-                                "Failed to generate cover image to {}: {}. Continuing without cover.",
-                                target_cover_path.display(),
-                                e
-                            );
-                            Ok(None)
-                        }
-                    }
-                } else {
-                    // Cover already exists
-                    Ok(Some(filename.to_string()))
-                }
+    /// Generate a cover image to a specific path
+    async fn generate_cover_image_to_path(
+        &self,
+        content: &str,
+        markdown_file_path: &Path,
+        target_cover_path: &Path,
+    ) -> Result<()> {
+        match self {
+            Self::Gemini(client) => {
+                client
+                    .generate_cover_image_to_path(content, markdown_file_path, target_cover_path)
+                    .await
+            }
+            Self::OpenAI(client) => {
+                client
+                    .generate_cover_image_to_path(content, markdown_file_path, target_cover_path)
+                    .await
             }
         }
     }
 }
 
+/// Resolve the image generation backend from frontmatter model and config
+fn resolve_backend(frontmatter: &Frontmatter, config: &Config) -> Result<ImageBackend> {
+    let model = frontmatter.effective_model();
+
+    match model {
+        "nb2" | "nb" => {
+            let Some(api_key) = config.gemini_api_key.as_ref() else {
+                return Err(Error::config(format!(
+                    "GEMINI_API_KEY required for model '{}'. Set GEMINI_API_KEY or use model: gpt in frontmatter.",
+                    model
+                )));
+            };
+            let model_id: &'static str = match model {
+                "nb" => "gemini-3-pro-image-preview",
+                _ => "gemini-3.1-flash-image-preview",
+            };
+            Ok(ImageBackend::Gemini(GeminiClient::new(
+                api_key.clone(),
+                model_id,
+            )))
+        }
+        "gpt" => {
+            let Some(api_key) = config.openai_api_key.as_ref() else {
+                return Err(Error::config(
+                    "OPENAI_API_KEY required for model 'gpt'. Set OPENAI_API_KEY or use model: nb2 in frontmatter.",
+                ));
+            };
+            Ok(ImageBackend::OpenAI(OpenAIClient::new(api_key.clone())))
+        }
+        _ => {
+            // Should not happen if frontmatter validation is correct
+            Err(Error::config(format!("Unknown model '{}'", model)))
+        }
+    }
+}
+
 /// Recursively processes all markdown files in a directory.
-///
-/// This function walks through the directory tree starting from `dir`,
-/// finds all files with `.md` extension, and uploads them to WeChat.
-/// Files that are already published (where `published: "true"`) will be skipped.
-///
-/// # Arguments
-///
-/// * `client` - WeChat client for API communication
-/// * `openai_client` - Optional OpenAI client for cover image generation
-/// * `dir` - Directory path to process recursively
-/// * `verbose` - Whether to enable detailed tracing logs
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - Directory traversal fails
-/// - Any file upload fails
 pub async fn process_directory(
     client: &WeChatClient,
-    openai_client: Option<&OpenAIClient>,
+    config: &Config,
     dir: &Path,
     verbose: bool,
 ) -> Result<()> {
@@ -355,31 +325,16 @@ pub async fn process_directory(
     }
 
     for entry in entries {
-        upload_file(client, openai_client, entry.path(), false, verbose).await?;
+        upload_file(client, config, entry.path(), false, verbose).await?;
     }
 
     Ok(())
 }
 
 /// Uploads a single markdown file to WeChat public account.
-///
-/// This function orchestrates the complete upload workflow by delegating
-/// to specialized functions for each step.
-///
-/// # Arguments
-///
-/// * `client` - WeChat client for API communication
-/// * `openai_client` - Optional OpenAI client for cover image generation
-/// * `path` - Path to the markdown file
-/// * `force` - If true, uploads regardless of published status
-/// * `verbose` - Whether to enable detailed tracing logs
-///
-/// # Errors
-///
-/// Returns an error if any step of the upload process fails
 pub async fn upload_file(
     client: &WeChatClient,
-    openai_client: Option<&OpenAIClient>,
+    config: &Config,
     path: &Path,
     force: bool,
     verbose: bool,
@@ -391,7 +346,7 @@ pub async fn upload_file(
     };
 
     // Handle cover image processing if needed
-    let cover_updated = process_cover_image(&mut frontmatter, path, openai_client, verbose).await?;
+    let cover_updated = process_cover_image(&mut frontmatter, path, config, verbose).await?;
 
     // Save frontmatter if cover was updated
     if cover_updated {
@@ -411,8 +366,8 @@ pub async fn upload_file(
         .map(|tf| tf.markdown.path())
         .unwrap_or(path);
 
-    // Execute the WeChat upload
-    let upload_result = execute_wechat_upload(client, upload_path, verbose).await;
+    // Execute the WeChat upload (display original path, upload from temp)
+    let upload_result = execute_wechat_upload(client, upload_path, path, verbose).await;
 
     // Temp files are automatically cleaned up when temp_files is dropped
     drop(temp_files);
@@ -427,11 +382,6 @@ pub async fn upload_file(
 }
 
 /// Parses markdown file and checks if it should be uploaded
-///
-/// # Returns
-///
-/// Returns the frontmatter and body if the file should be processed,
-/// or returns an error if the file should be skipped
 async fn parse_and_check_file(
     path: &Path,
     force: bool,
@@ -453,54 +403,107 @@ async fn parse_and_check_file(
 }
 
 /// Processes cover image generation and updating
-///
-/// # Returns
-///
-/// Returns true if the frontmatter was updated with a new cover image
 async fn process_cover_image(
     frontmatter: &mut Frontmatter,
     path: &Path,
-    openai_client: Option<&OpenAIClient>,
+    config: &Config,
     verbose: bool,
 ) -> Result<bool> {
-    let Some(openai_client) = openai_client else {
-        check_existing_cover(frontmatter, path, verbose);
+    // Check if we need to generate at all
+    if !should_generate_cover(frontmatter, path, verbose).await {
         return Ok(false);
+    }
+
+    // Resolve the backend based on frontmatter model
+    let backend = match resolve_backend(frontmatter, config) {
+        Ok(backend) => backend,
+        Err(e) => {
+            // Missing API key — warn and continue without cover
+            FORMATTER.print_warning(&e.to_string());
+            return Ok(false);
+        }
     };
 
+    let model_name = frontmatter.effective_model();
     if verbose {
-        info!("OpenAI client available for cover generation");
+        info!("Using model '{}' for cover generation", model_name);
     }
 
-    let should_generate = should_generate_cover(frontmatter, path, verbose).await;
+    // Build content for image generation: title + description gives the best context
+    let image_content = match &frontmatter.title {
+        Some(title) => format!(
+            "Title: {}\n\nDescription: {}",
+            title, frontmatter.description
+        ),
+        None => frontmatter.description.clone(),
+    };
 
-    if !should_generate {
-        return Ok(false);
-    }
-
-    let processor = DefaultCoverImageProcessor::new(Some(openai_client));
-
-    match processor
-        .ensure_cover_image(&frontmatter.description, path, frontmatter.cover.as_deref())
-        .await?
-    {
-        Some(cover_filename) => {
-            frontmatter.set_cover(cover_filename.clone());
-
-            if verbose {
-                info!("Successfully generated cover image: {}", cover_filename);
-            } else {
-                FORMATTER.print_generation(&FORMATTER.format_cover_success(&cover_filename));
-            }
-            Ok(true)
-        }
+    // Generate the cover image
+    match &frontmatter.cover {
         None => {
-            if verbose {
-                warn!("Cover generation failed but continuing without error");
-            } else {
-                FORMATTER.print_warning(&FORMATTER.format_cover_failure());
+            // Generate with auto filename
+            let base_filename = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("article");
+
+            match backend
+                .generate_cover_image(&image_content, path, base_filename)
+                .await
+            {
+                Ok(cover_filename) => {
+                    frontmatter.set_cover(cover_filename.clone());
+                    if verbose {
+                        info!("Successfully generated cover image: {}", cover_filename);
+                    } else {
+                        FORMATTER
+                            .print_generation(&FORMATTER.format_cover_success(&cover_filename));
+                    }
+                    Ok(true)
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to generate cover image: {}. Continuing without cover.",
+                        e
+                    );
+                    if !verbose {
+                        FORMATTER.print_warning(&FORMATTER.format_cover_failure());
+                    }
+                    Ok(false)
+                }
             }
-            Ok(false)
+        }
+        Some(cover_filename) => {
+            let (target_cover_path, exists) = resolve_and_check_cover_path(path, cover_filename);
+
+            if exists {
+                return Ok(false);
+            }
+
+            match backend
+                .generate_cover_image_to_path(&image_content, path, &target_cover_path)
+                .await
+            {
+                Ok(()) => {
+                    if verbose {
+                        info!("Successfully generated cover image: {}", cover_filename);
+                    } else {
+                        FORMATTER.print_generation(&FORMATTER.format_cover_success(cover_filename));
+                    }
+                    Ok(true)
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to generate cover image to {}: {}. Continuing without cover.",
+                        target_cover_path.display(),
+                        e
+                    );
+                    if !verbose {
+                        FORMATTER.print_warning(&FORMATTER.format_cover_failure());
+                    }
+                    Ok(false)
+                }
+            }
         }
     }
 }
@@ -543,40 +546,23 @@ async fn should_generate_cover(frontmatter: &Frontmatter, path: &Path, verbose: 
     }
 }
 
-/// Checks if existing cover file exists when no OpenAI client is available
-fn check_existing_cover(frontmatter: &Frontmatter, path: &Path, verbose: bool) {
-    if let Some(cover_filename) = &frontmatter.cover {
-        let (cover_path, exists) = resolve_and_check_cover_path(path, cover_filename);
-        if !exists {
-            if verbose {
-                warn!(
-                    "Cover image specified ({}) but file not found at {} and no OpenAI API key provided. Upload may fail.",
-                    cover_filename,
-                    cover_path.display()
-                );
-            } else {
-                FORMATTER.print_warning(&format!(
-                    "cover missing ({}), no OpenAI key to generate",
-                    cover_filename
-                ));
-            }
-        }
-    }
-}
-
 /// Executes the WeChat upload operation
+///
+/// `upload_path` is the actual file to upload (may be a temp file).
+/// `display_path` is the original file path shown to the user.
 async fn execute_wechat_upload(
     client: &WeChatClient,
-    path: &Path,
+    upload_path: &Path,
+    display_path: &Path,
     verbose: bool,
 ) -> Result<String> {
     if verbose {
-        info!("Uploading file: {}", path.display());
+        info!("Uploading file: {}", display_path.display());
     } else {
-        FORMATTER.print_progress(&FORMATTER.format_file_operation("uploading", path));
+        FORMATTER.print_progress(&FORMATTER.format_file_operation("uploading", display_path));
     }
 
-    let path_str = path
+    let path_str = upload_path
         .to_str()
         .ok_or_else(|| Error::generic("Path contains invalid UTF-8"))?;
 
@@ -585,16 +571,16 @@ async fn execute_wechat_upload(
             if verbose {
                 info!("Successfully uploaded with draft ID: {}", draft_id);
             } else {
-                FORMATTER.print_success(&FORMATTER.format_upload_success(path));
+                FORMATTER.print_success(&FORMATTER.format_upload_success(display_path));
             }
             Ok(draft_id)
         }
         Err(e) => {
             let error_msg = format!("WeChat upload failed: {}", e);
             if verbose {
-                warn!("Failed to upload {}: {}", path.display(), error_msg);
+                warn!("Failed to upload {}: {}", display_path.display(), error_msg);
             } else {
-                FORMATTER.print_error(&FORMATTER.format_upload_failure(path));
+                FORMATTER.print_error(&FORMATTER.format_upload_failure(display_path));
                 eprintln!("Error: {}", error_msg);
             }
             Err(Error::wechat(error_msg))
@@ -621,15 +607,6 @@ async fn update_published_status(path: &Path, verbose: bool) -> Result<()> {
 }
 
 /// Resolves a cover image path relative to the markdown file and checks if it exists
-///
-/// # Arguments
-///
-/// * `markdown_file_path` - Path to the markdown file
-/// * `cover_filename` - Relative or absolute path to the cover image
-///
-/// # Returns
-///
-/// A tuple containing the resolved path and whether the file exists
 pub fn resolve_and_check_cover_path(
     markdown_file_path: &Path,
     cover_filename: &str,
@@ -695,59 +672,73 @@ mod tests {
     }
 
     #[test]
-    fn test_cover_image_processor() {
-        let _processor = DefaultCoverImageProcessor::new(None);
+    fn test_resolve_backend_gemini_nb2() {
+        let frontmatter = Frontmatter::new(); // defaults to nb2
+        let config = Config::new(
+            "app".into(),
+            "secret".into(),
+            None,
+            Some("gemini-key".into()),
+            false,
+        );
 
-        let temp_dir = TempDir::new().unwrap();
-        let md_file = temp_dir.path().join("test.md");
-        fs::write(&md_file, "# Test").unwrap();
-
-        // Test resolve_cover_path (sync version for testing)
-        let (path, exists) = resolve_and_check_cover_path(&md_file, "test.png");
-        assert_eq!(path, temp_dir.path().join("test.png"));
-        assert!(!exists);
+        let backend = resolve_backend(&frontmatter, &config);
+        assert!(backend.is_ok());
     }
 
-    #[tokio::test]
-    async fn test_cover_image_processor_no_openai() {
-        let processor = DefaultCoverImageProcessor::new(None);
-        let temp_dir = TempDir::new().unwrap();
-        let md_file = temp_dir.path().join("test.md");
+    #[test]
+    fn test_resolve_backend_gemini_missing_key() {
+        let frontmatter = Frontmatter::new(); // defaults to nb2
+        let config = Config::new("app".into(), "secret".into(), None, None, false);
 
-        // Without OpenAI client, should return None
-        let result = processor
-            .ensure_cover_image("content", &md_file, None)
-            .await
-            .unwrap();
-        assert!(result.is_none());
+        let result = resolve_backend(&frontmatter, &config);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("GEMINI_API_KEY"));
+    }
 
-        let result = processor
-            .ensure_cover_image("content", &md_file, Some("cover.png"))
-            .await
-            .unwrap();
-        assert!(result.is_none());
+    #[test]
+    fn test_resolve_backend_gpt() {
+        let mut frontmatter = Frontmatter::new();
+        frontmatter.model = Some("gpt".into());
+        let config = Config::new(
+            "app".into(),
+            "secret".into(),
+            Some("openai-key".into()),
+            None,
+            false,
+        );
+
+        let backend = resolve_backend(&frontmatter, &config);
+        assert!(backend.is_ok());
+    }
+
+    #[test]
+    fn test_resolve_backend_gpt_missing_key() {
+        let mut frontmatter = Frontmatter::new();
+        frontmatter.model = Some("gpt".into());
+        let config = Config::new("app".into(), "secret".into(), None, None, false);
+
+        let result = resolve_backend(&frontmatter, &config);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("OPENAI_API_KEY"));
     }
 
     #[tokio::test]
     async fn test_process_directory_empty() {
         let temp_dir = TempDir::new().unwrap();
 
-        // Create a mock WeChat client (this will fail in real usage without proper credentials)
-        // In a real test environment, we'd use dependency injection or mocking
         let client =
             wechat_pub_rs::WeChatClient::new("test_id".to_string(), "test_secret".to_string())
                 .await;
 
-        // This test mainly verifies the directory processing logic
         match client {
             Ok(client) => {
-                let result = process_directory(&client, None, temp_dir.path(), false).await;
-                // Should succeed with empty directory
+                let config = Config::new("test_id".into(), "test_secret".into(), None, None, false);
+                let result = process_directory(&client, &config, temp_dir.path(), false).await;
                 assert!(result.is_ok());
             }
             Err(_) => {
-                // Expected to fail without real credentials, but the test structure is correct
-                // In integration tests, we'd use proper mocking
+                // Expected to fail without real credentials
             }
         }
     }

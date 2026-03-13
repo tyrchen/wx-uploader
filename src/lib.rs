@@ -7,7 +7,7 @@
 //!
 //! - Upload individual markdown files or process directories recursively
 //! - Parse and manage YAML frontmatter to track publication status
-//! - Automatically generate cover images using OpenAI's DALL-E when missing
+//! - Automatically generate cover images using Gemini (default) or OpenAI
 //! - Skip already published files in directory processing mode
 //! - Support for custom themes and code highlighters via frontmatter
 //!
@@ -33,6 +33,7 @@
 
 pub mod cli;
 pub mod error;
+pub mod gemini;
 pub mod markdown;
 pub mod models;
 pub mod openai;
@@ -45,10 +46,9 @@ pub use models::{Config, Frontmatter};
 
 use std::path::Path;
 
-/// Core uploader functionality combining WeChat and OpenAI clients
+/// Core uploader functionality combining WeChat and image generation clients
 pub struct WxUploader {
     wechat_client: wechat::WeChatClient,
-    openai_client: Option<openai::OpenAIClient>,
     config: Config,
 }
 
@@ -70,14 +70,8 @@ impl WxUploader {
         .await
         .map_err(|e| Error::wechat(e.to_string()))?;
 
-        let openai_client = config
-            .openai_api_key
-            .as_ref()
-            .map(|key| openai::OpenAIClient::new(key.clone()));
-
         Ok(Self {
             wechat_client,
-            openai_client,
             config,
         })
     }
@@ -109,7 +103,7 @@ impl WxUploader {
     pub async fn upload_file<P: AsRef<Path>>(&self, path: P, force: bool) -> Result<()> {
         wechat::upload_file(
             &self.wechat_client,
-            self.openai_client.as_ref(),
+            &self.config,
             path.as_ref(),
             force,
             self.config.verbose,
@@ -131,7 +125,7 @@ impl WxUploader {
     pub async fn process_directory<P: AsRef<Path>>(&self, dir: P) -> Result<()> {
         wechat::process_directory(
             &self.wechat_client,
-            self.openai_client.as_ref(),
+            &self.config,
             dir.as_ref(),
             self.config.verbose,
         )
@@ -144,11 +138,12 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_uploader_creation_without_openai() {
+    async fn test_uploader_creation_without_keys() {
         let config = Config {
             wechat_app_id: "test_app_id".to_string(),
             wechat_app_secret: "test_secret".to_string(),
             openai_api_key: None,
+            gemini_api_key: None,
             verbose: false,
         };
 

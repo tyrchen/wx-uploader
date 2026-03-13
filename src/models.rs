@@ -18,6 +18,8 @@ pub struct Config {
     pub wechat_app_secret: String,
     /// Optional OpenAI API key for cover image generation
     pub openai_api_key: Option<String>,
+    /// Optional Gemini API key for cover image generation
+    pub gemini_api_key: Option<String>,
     /// Enable verbose logging
     pub verbose: bool,
 }
@@ -45,11 +47,13 @@ impl Config {
             .map_err(|_| Error::missing_env_var("WECHAT_APP_SECRET"))?;
 
         let openai_api_key = env::var("OPENAI_API_KEY").ok();
+        let gemini_api_key = env::var("GEMINI_API_KEY").ok();
 
         Ok(Self {
             wechat_app_id,
             wechat_app_secret,
             openai_api_key,
+            gemini_api_key,
             verbose: false, // Default to false, can be overridden by CLI
         })
     }
@@ -59,12 +63,14 @@ impl Config {
         wechat_app_id: String,
         wechat_app_secret: String,
         openai_api_key: Option<String>,
+        gemini_api_key: Option<String>,
         verbose: bool,
     ) -> Self {
         Self {
             wechat_app_id,
             wechat_app_secret,
             openai_api_key,
+            gemini_api_key,
             verbose,
         }
     }
@@ -134,6 +140,12 @@ pub struct Frontmatter {
     /// If missing, the system will attempt to generate one using AI.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cover: Option<String>,
+
+    /// Image generation model alias.
+    ///
+    /// Available models: nb2 (default, Gemini Flash), nb (Gemini Pro), gpt (OpenAI)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 
     /// Theme for the WeChat article styling.
     ///
@@ -225,6 +237,11 @@ impl Frontmatter {
         self.published.is_none() || self.published.as_deref() == Some("")
     }
 
+    /// Returns the effective model alias, defaulting to "nb2"
+    pub fn effective_model(&self) -> &str {
+        self.model.as_deref().unwrap_or("nb2")
+    }
+
     /// Validates the frontmatter
     pub fn validate(&self) -> Result<()> {
         // Validate theme if present
@@ -249,6 +266,17 @@ impl Frontmatter {
             )));
         }
 
+        // Validate model if present
+        if let Some(model) = &self.model
+            && !is_valid_model(model)
+        {
+            return Err(Error::config(format!(
+                "Invalid model '{}'. Available models: {}",
+                model,
+                VALID_MODELS.join(", ")
+            )));
+        }
+
         Ok(())
     }
 }
@@ -264,6 +292,9 @@ pub const VALID_THEMES: &[&str] = &[
     "purple",
     "rainbow",
 ];
+
+/// Valid image generation models
+pub const VALID_MODELS: &[&str] = &["nb2", "nb", "gpt"];
 
 /// Valid code highlighters for syntax highlighting
 pub const VALID_CODE_HIGHLIGHTERS: &[&str] = &[
@@ -289,6 +320,11 @@ pub fn is_valid_code_highlighter(highlighter: &str) -> bool {
     VALID_CODE_HIGHLIGHTERS.contains(&highlighter)
 }
 
+/// Checks if a model alias is valid
+pub fn is_valid_model(model: &str) -> bool {
+    VALID_MODELS.contains(&model)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,6 +336,7 @@ mod tests {
             "test_app_id".to_string(),
             "test_secret".to_string(),
             Some("test_openai_key".to_string()),
+            None,
             true,
         );
 
@@ -315,6 +352,7 @@ mod tests {
             "test_app_id".to_string(),
             "test_secret".to_string(),
             None,
+            None,
             false,
         )
         .with_verbose(true);
@@ -324,13 +362,19 @@ mod tests {
 
     #[test]
     fn test_config_validation() {
-        let valid_config = Config::new("app_id".to_string(), "secret".to_string(), None, false);
+        let valid_config = Config::new(
+            "app_id".to_string(),
+            "secret".to_string(),
+            None,
+            None,
+            false,
+        );
         assert!(valid_config.validate().is_ok());
 
-        let empty_app_id = Config::new("".to_string(), "secret".to_string(), None, false);
+        let empty_app_id = Config::new("".to_string(), "secret".to_string(), None, None, false);
         assert!(empty_app_id.validate().is_err());
 
-        let empty_secret = Config::new("app_id".to_string(), "".to_string(), None, false);
+        let empty_secret = Config::new("app_id".to_string(), "".to_string(), None, None, false);
         assert!(empty_secret.validate().is_err());
     }
 
@@ -455,6 +499,7 @@ mod tests {
             published: Some("draft".to_string()),
             description: "Test Article".to_string(),
             cover: Some("cover.png".to_string()),
+            model: None,
             theme: Some("lapis".to_string()),
             code: Some("github".to_string()),
             other: serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),

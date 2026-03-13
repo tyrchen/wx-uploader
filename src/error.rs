@@ -52,6 +52,10 @@ pub enum Error {
     #[error("OpenAI API error: {message}")]
     OpenAI { message: String },
 
+    /// Gemini API error
+    #[error("Gemini API error: {message}")]
+    Gemini { message: String },
+
     /// Cover image error
     #[error("Cover image error for {path}: {reason}")]
     CoverImage { path: PathBuf, reason: String },
@@ -91,6 +95,13 @@ impl Error {
     /// Creates a new OpenAI API error
     pub fn openai(message: impl Into<String>) -> Self {
         Self::OpenAI {
+            message: message.into(),
+        }
+    }
+
+    /// Creates a new Gemini API error
+    pub fn gemini(message: impl Into<String>) -> Self {
+        Self::Gemini {
             message: message.into(),
         }
     }

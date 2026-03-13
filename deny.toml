@@ -67,6 +67,7 @@ ignore = [
   "RUSTSEC-2024-0320",
   "RUSTSEC-2025-0057",
   "RUSTSEC-2024-0436", # paste crate - transitive dep from image/rav1e
+  "RUSTSEC-2025-0141", # bincode unmaintained - transitive dep from syntect
   #"RUSTSEC-0000-0000",
   #{ id = "RUSTSEC-0000-0000", reason = "you can specify a reason the advisory is ignored" },
   #"a-crate-that-is-yanked@0.1.1", # you can also ignore yanked crate versions if you wish
@@ -106,6 +107,7 @@ allow = [
   "OpenSSL",
   "Zlib",
   "NCSA", # libfuzzer-sys - transitive dep from image/rav1e
+  "MITNFA", # fmt2io - transitive dep from comrak/wechat-pub-rs
 ]
 # The confidence threshold for detecting a license from license text.
 # The higher the value, the more closely the license text must be to the

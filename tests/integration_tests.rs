@@ -4,7 +4,7 @@ use wx_uploader::{
     error::Result,
     markdown::{parse_markdown_file, write_markdown_file},
     models::Frontmatter,
-    wechat::{CoverImageProcessor, DefaultCoverImageProcessor, resolve_and_check_cover_path},
+    wechat::resolve_and_check_cover_path,
 };
 
 /// Integration tests for file processing functionality.
@@ -116,32 +116,14 @@ fn test_cover_image_path_resolution() {
     assert!(exists);
 }
 
-#[tokio::test]
-async fn test_cover_image_processor_without_openai() {
+#[test]
+fn test_cover_path_resolution_without_file() {
     let temp_dir = TempDir::new().unwrap();
     let md_file = temp_dir.path().join("test.md");
     fs::write(&md_file, "# Test Article").unwrap();
 
-    // Create processor without OpenAI client
-    let processor = DefaultCoverImageProcessor::new(None);
-
-    // Test that it returns None when no OpenAI client is available
-    let result = processor
-        .ensure_cover_image("test content", &md_file, None)
-        .await
-        .unwrap();
-    assert!(result.is_none());
-
-    let result = processor
-        .ensure_cover_image("test content", &md_file, Some("cover.png"))
-        .await
-        .unwrap();
-    assert!(result.is_none());
-
     // Test cover path resolution
-    let (path, exists) = processor
-        .resolve_cover_path(&md_file, "test_cover.png")
-        .await;
+    let (path, exists) = resolve_and_check_cover_path(&md_file, "test_cover.png");
     assert_eq!(path, temp_dir.path().join("test_cover.png"));
     assert!(!exists);
 }

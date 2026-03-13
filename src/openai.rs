@@ -244,12 +244,24 @@ impl SceneDescriptionGenerator for OpenAIClient {
             "messages": [
                 {
                     "role": "system",
-                    "content": "Generate a 2-sentence visual scene description in English for a cover image based on the article content."
+                    "content": "你是一位为微信公众号技术文章设计封面的艺术总监。\
+                     请仔细阅读文章的标题和描述，找到一个有创意的视觉隐喻来直观表达文章的核心思想。\
+                     读者仅凭图片就应该能感受到文章的主题。\
+                     不要生成通用的科技素材图，而是思考什么象征性的场景能精准捕捉这篇文章的独特主题。\
+                     用2-3句话描述一个生动的视觉场景，包括：隐喻场景、氛围光影、色彩基调（偏好电光蓝、暖琥珀、深紫色系，深色背景）。\
+                     画面要有故事感，作为缩略图必须醒目——主体突出、构图简洁、电影感。"
                 },
                 {
                     "role": "user",
-                    "content": format!("Article content:\n\n{}\n\nScene description:",
-                        if content.len() > 2000 { &content[..2000] } else { content })
+                    "content": format!("Article content:\n\n{}\n\nScene description:", {
+                        if content.len() > 2000 {
+                            let mut end = 2000;
+                            while !content.is_char_boundary(end) { end -= 1; }
+                            &content[..end]
+                        } else {
+                            content
+                        }
+                    })
                 }
             ],
             "temperature": 1
@@ -264,7 +276,7 @@ impl SceneDescriptionGenerator for OpenAIClient {
             .to_string();
 
         if scene_description.is_empty() {
-            scene_description = "A serene landscape with rolling hills under a soft, dreamy sky filled with gentle clouds. The scene evokes a sense of peaceful contemplation and infinite possibilities.".to_string();
+            scene_description = "一座发光的晶体数据结构悬浮在深邃的太空中，几何切面折射出电光蓝和琥珀色的光芒。发光粒子流环绕其间，暗示着信息在精密系统中优雅流动。".to_string();
         }
 
         Ok(scene_description)
@@ -274,7 +286,13 @@ impl SceneDescriptionGenerator for OpenAIClient {
 impl PromptBuilder for OpenAIClient {
     fn create_dalle_prompt(&self, scene_description: &str) -> String {
         format!(
-            "Create a wide, Ghibli-style image to represent this scene: {}",
+            "生成一张宽幅封面插图（16:9比例）。\
+             图像必须体现下方描述的具体场景，不要生成通用科技素材。\n\n\
+             场景：{}\n\n\
+             风格：高端数字艺术，优雅精致。\
+             色调以电光蓝、暖琥珀、深紫色为主，深色背景。\
+             运用体积光、电影级景深、充足留白。\
+             作为缩略图必须醒目：高对比度、主体突出、禁止任何文字或水印。",
             scene_description
         )
     }
@@ -439,7 +457,7 @@ mod tests {
         let scene_description = "A serene forest with morning mist";
         let prompt = client.create_dalle_prompt(scene_description);
 
-        assert!(prompt.contains("Ghibli-style"));
+        assert!(prompt.contains("高端数字艺术"));
         assert!(prompt.contains("A serene forest with morning mist"));
     }
 
