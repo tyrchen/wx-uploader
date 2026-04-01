@@ -102,9 +102,11 @@ pub fn print_colored_help() {
         "WECHAT_APP_SECRET".bright_cyan()
     );
     println!(
-        "{}: Set {} for automatic cover image generation",
+        "{}: Set {} for default cover generation or {} for {}",
         "OPTIONAL".bright_blue().bold(),
-        "OPENAI_API_KEY".bright_cyan()
+        "GEMINI_API_KEY".bright_cyan(),
+        "OPENAI_API_KEY".bright_cyan(),
+        "model: gpt".bright_cyan()
     );
     println!();
     println!(
@@ -133,8 +135,13 @@ pub fn print_colored_help() {
     );
     println!("  {}: \"draft\"", "published".bright_cyan());
     println!(
-        "  {}: \"cover.png\"     {} Auto-generated if missing with OpenAI",
+        "  {}: \"cover.png\"     {} Auto-generated if missing with selected backend",
         "cover".bright_cyan(),
+        "#".bright_black()
+    );
+    println!(
+        "  {}: \"nb2\"           {} Models: nb2 (default, Gemini Flash), nb (Gemini Pro), gpt (OpenAI)",
+        "model".bright_cyan(),
         "#".bright_black()
     );
     println!("  {}", "---".bright_black());

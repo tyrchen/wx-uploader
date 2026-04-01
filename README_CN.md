@@ -27,9 +27,23 @@ cargo install --path .
 export WECHAT_APP_ID="your_app_id"
 export WECHAT_APP_SECRET="your_app_secret"
 
-# 可选：用于自动生成封面图的 OpenAI API 密钥
+# 可选：用于默认自动生成封面图的 Gemini API 密钥
+export GEMINI_API_KEY="your_gemini_api_key"
+
+# 可选：用于 `model: gpt` 的 OpenAI API 密钥
 export OPENAI_API_KEY="your_openai_api_key"
 ```
+
+您可以在微信开发者控制台获取 `WECHAT_APP_ID` 和 `WECHAT_APP_SECRET`：
+[https://developers.weixin.qq.com/console](https://developers.weixin.qq.com/console)
+
+如果看到类似下面的错误：
+
+```text
+WeChat API error: WeChat upload failed: WeChat API error [40164]: invalid ip <ipv4 address> ipv6 <ipv6 address>, not in whitelist rid
+```
+
+请在同一个控制台中把当前的 API IP 添加到白名单后再重试。
 
 ## 使用方法
 
@@ -57,7 +71,7 @@ wx-uploader ./2025/08/01-chat-with-ai.md
 
 1. 工具扫描带有 YAML frontmatter 的 Markdown 文件
 2. 如果文件的 frontmatter 中没有 `published: true`，则会被上传
-3. 如果没有指定封面图片且配置了 OpenAI API 密钥，将使用 GPT-5 和 gpt-image-1.5 生成吉卜力风格的封面图
+3. 如果没有指定封面图片，工具会按所选图像模型自动生成封面。默认使用 `nb2`（Gemini Flash），也可以在 frontmatter 中选择 `nb`（Gemini Pro）或 `gpt`（OpenAI）
 4. 指定单个文件时，无论其发布状态如何都会被上传
 5. 上传成功后，frontmatter 会更新为 `published: draft` 并包含生成的封面文件名（如果有）
 
@@ -67,7 +81,8 @@ wx-uploader ./2025/08/01-chat-with-ai.md
 ---
 title: 我的文章标题
 published: draft  # 或 'true' 以跳过上传
-cover: cover.png  # 可选，如果缺失且设置了 OpenAI 密钥则自动生成
+cover: cover.png  # 可选，如果缺失且已配置所选模型对应的密钥则自动生成
+model: nb2        # 可选，默认是 nb2；可用值：nb2、nb、gpt
 description: 文章描述
 author: 作者姓名
 theme: lapis  # 可选主题
@@ -78,36 +93,39 @@ theme: lapis  # 可选主题
 
 ## AI 封面生成
 
-当设置了 `OPENAI_API_KEY` 环境变量时，工具会为没有指定封面的文章自动生成精美的封面图片。
+当设置了 `GEMINI_API_KEY` 环境变量时，工具会为没有指定封面的文章自动生成封面图片。Gemini 是默认后端。如果您想对某篇文章改用 OpenAI，可在该文件的 frontmatter 中设置 `model: gpt`，并提供 `OPENAI_API_KEY`。
+
+### 模型选择
+
+- `nb2`（默认）：Gemini Flash 图像模型
+- `nb`：Gemini Pro 图像模型
+- `gpt`：OpenAI 图像生成
 
 ### 工作原理
 
-1. **内容分析**：GPT-5-mini 分析您的 Markdown 内容以创建生动的场景描述
-2. **提示词生成**：创建优化的提示词，专注于吉卜力风格的艺术作品
-3. **图像生成**：gpt-image-1.5 生成高质量的 16:9 宽高比封面图片
+1. **上下文构建**：使用文章标题和描述作为图像生成上下文
+2. **模型路由**：根据 frontmatter 中的 `model` 选择后端；未指定时默认使用 `nb2`
+3. **图像生成**：由 Gemini 或 OpenAI 生成高质量的 16:9 封面图片
 4. **自动保存**：下载并保存图片到与 Markdown 文件相同的目录
 5. **元数据更新**：使用生成的封面文件名更新 frontmatter
 
 ### 特性
 
-- **吉卜力风格**：美丽的艺术美学，柔和的色彩和自然元素
-- **内容感知**：场景描述基于您的实际文章内容
-- **高质量**：1536x1024 分辨率，优化用于网页显示
+- **多后端支持**：默认使用 Gemini，也支持按文章切换到 OpenAI
+- **内容感知**：提示词基于文章标题和描述构建
+- **高质量**：生成适合文章缩略图展示的 16:9 宽幅封面
 - **自动命名**：生成的文件使用唯一名称以防止冲突
 - **优雅降级**：如果图像生成失败，继续正常上传流程
 - **Base64 支持**：同时处理 URL 和 base64 编码的图像响应
 
 ### 输出示例
 
-对于一篇关于"构建 Rust 应用程序"的文章，AI 可能会生成这样的场景：
-> "一个舒适的工作坊，充满了精致的齿轮和发光的机械工具，工匠正在仔细组装发条装置。温暖的金色光线透过高窗洒进来，照亮了像萤火虫一样在尘埃中闪烁的漂浮锈粒子。"
-
-这会变成一幅美丽的吉卜力风格封面图片，视觉化地呈现您的内容。
+对于一篇关于“构建 Rust 应用程序”的文章，工具会结合标题和描述生成一张宽幅封面图，用视觉方式表达文章的核心主题。
 
 ## 功能特性
 
 - 📝 **批量上传**：处理整个目录的 Markdown 文件
-- 🎨 **AI 封面生成**：使用 OpenAI 最新模型自动生成封面图片
+- 🎨 **AI 封面生成**：默认使用 Gemini 自动生成封面，也支持可选 OpenAI
 - 🔄 **智能处理**：跳过已发布的文章
 - 📊 **进度跟踪**：带有彩色状态指示器的清晰控制台输出
 - 🛡️ **错误恢复**：优雅地处理 API 失败
