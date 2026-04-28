@@ -34,6 +34,7 @@
 pub mod cli;
 pub mod error;
 pub mod gemini;
+pub mod image_prompt;
 pub mod markdown;
 pub mod models;
 pub mod openai;

@@ -195,9 +195,6 @@ pub trait ApiErrorFormatter {
     /// Formats a general API error
     fn format_api_error(&self, service: &str, error: &str) -> String;
 
-    /// Formats scene description generation failure
-    fn format_scene_description_failure(&self, error: &str) -> String;
-
     /// Formats image generation failure
     fn format_image_generation_failure(&self, error: &str) -> String;
 
@@ -218,14 +215,6 @@ impl<T: OutputFormatter> ApiErrorFormatter for T {
 
     fn format_api_error(&self, service: &str, error: &str) -> String {
         format!("  {} {} API Error: {}", "❌".bright_red(), service, error)
-    }
-
-    fn format_scene_description_failure(&self, error: &str) -> String {
-        format!(
-            "  {} Failed to generate scene description: {}",
-            "❌".bright_red(),
-            error
-        )
     }
 
     fn format_image_generation_failure(&self, error: &str) -> String {

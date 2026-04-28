@@ -57,7 +57,7 @@ wx-uploader ./2025/08/01-chat-with-ai.md
 
 1. 工具扫描带有 YAML frontmatter 的 Markdown 文件
 2. 如果文件的 frontmatter 中没有 `published: true`，则会被上传
-3. 如果没有指定封面图片且配置了 OpenAI API 密钥，将使用 GPT-5 和 gpt-image-1.5 生成吉卜力风格的封面图
+3. 如果没有指定封面图片且配置了 OpenAI API 密钥，将使用 GPT-5 和 gpt-image-2 生成吉卜力风格的封面图
 4. 指定单个文件时，无论其发布状态如何都会被上传
 5. 上传成功后，frontmatter 会更新为 `published: draft` 并包含生成的封面文件名（如果有）
 
@@ -84,7 +84,7 @@ theme: lapis  # 可选主题
 
 1. **内容分析**：GPT-5-mini 分析您的 Markdown 内容以创建生动的场景描述
 2. **提示词生成**：创建优化的提示词，专注于吉卜力风格的艺术作品
-3. **图像生成**：gpt-image-1.5 生成高质量的 16:9 宽高比封面图片
+3. **图像生成**：gpt-image-2 生成高质量的 16:9 宽高比封面图片
 4. **自动保存**：下载并保存图片到与 Markdown 文件相同的目录
 5. **元数据更新**：使用生成的封面文件名更新 frontmatter
 

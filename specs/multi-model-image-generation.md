@@ -10,7 +10,7 @@ Replace the hardcoded OpenAI image generation with a pluggable backend supportin
 | --------------- | -------------------------------- | ------------- | --------------------------- |
 | `nb2` (default) | `gemini-3.1-flash-image-preview` | Google Gemini | Fast, cheap, strong quality |
 | `nb`            | `gemini-3-pro-image-preview`     | Google Gemini | Highest quality             |
-| `gpt`           | `gpt-image-1.5`                  | OpenAI        | Current behavior            |
+| `gpt`           | `gpt-image-2`                    | OpenAI        | Current behavior            |
 
 ## Frontmatter Change
 

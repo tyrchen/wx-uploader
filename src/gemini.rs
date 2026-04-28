@@ -4,6 +4,7 @@
 //! images using Gemini's native image generation capabilities.
 
 use crate::error::{Error, Result};
+use crate::image_prompt::build_cover_prompt;
 use crate::output::{FORMATTER, FilePathFormatter};
 use base64::Engine;
 use reqwest::Client;
@@ -42,32 +43,7 @@ impl GeminiClient {
 
     /// Generates a cover image from article content and saves it to the target path
     async fn generate_cover(&self, content: &str, target_path: &Path) -> Result<()> {
-        let truncated = if content.len() > 2000 {
-            // Find a safe char boundary for truncation
-            let mut end = 2000;
-            while !content.is_char_boundary(end) {
-                end -= 1;
-            }
-            &content[..end]
-        } else {
-            content
-        };
-
-        let prompt = format!(
-            "为微信公众号文章生成一张宽幅封面图（16:9比例）。\n\n\
-             请仔细阅读以下文章信息，然后创作一幅能直观传达文章核心思想的视觉隐喻图像。\
-             读者仅凭图片就应该能感受到文章的主题。\n\n\
-             {}\n\n\
-             重要要求：\n\
-             - 图像必须体现上述文章的具体概念，不要生成通用的科技素材图\n\
-             - 寻找一个有创意的视觉隐喻或象征场景来表达文章独特的主题\n\
-             - 画面要有故事感和情感张力，让人产生好奇和共鸣\n\n\
-             风格要求：高端数字艺术，优雅精致。\
-             色调以电光蓝、暖琥珀、深紫、亮青色为主，深色背景。\
-             运用体积光、发光粒子、电影级景深、充足的留白。\
-             作为缩略图必须醒目：高对比度、主体突出、禁止出现任何文字或水印。",
-            truncated
-        );
+        let prompt = build_cover_prompt(content);
 
         info!(
             "Generating cover image with Gemini model: {}",

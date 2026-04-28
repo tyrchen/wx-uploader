@@ -1,9 +1,10 @@
 //! OpenAI integration for cover image generation
 //!
-//! This module provides OpenAI API integration for generating article cover images
-//! using GPT-5-mini for scene descriptions and gpt-image-1 for image generation.
+//! Single-stage flow: article content plus the shared style directives go
+//! straight to gpt-image-2. No intermediate text model.
 
 use crate::error::{Error, Result};
+use crate::image_prompt::build_cover_prompt;
 use crate::output::{ApiErrorFormatter, FORMATTER, FilePathFormatter, OutputFormatter};
 use base64::Engine;
 use reqwest::Client;
@@ -11,30 +12,18 @@ use serde_json::{Value, json};
 use std::path::Path;
 use tracing::info;
 
-/// Trait for generating scene descriptions from content
-#[async_trait::async_trait]
-pub trait SceneDescriptionGenerator {
-    /// Generates a vivid scene description from markdown content
-    async fn generate_scene_description(&self, content: &str) -> Result<String>;
-}
-
 /// Trait for generating images from text descriptions
 #[async_trait::async_trait]
 pub trait ImageGenerator {
-    /// Generates an image from a text prompt and returns the URL
+    /// Generates an image from a text prompt and returns either a URL or
+    /// a `base64:`-prefixed marker holding the raw image bytes.
     async fn generate_image(&self, prompt: &str) -> Result<String>;
 
-    /// Downloads an image from a URL and saves it to the specified path
+    /// Downloads (or decodes) the image and saves it to the specified path
     async fn download_image(&self, url: &str, file_path: &Path) -> Result<()>;
 }
 
-/// Trait for creating image generation prompts
-pub trait PromptBuilder {
-    /// Creates an image prompt for generating a Studio Ghibli-style cover image
-    fn create_dalle_prompt(&self, scene_description: &str) -> String;
-}
-
-/// OpenAI API client for generating cover images and scene descriptions
+/// OpenAI API client for generating cover images
 #[derive(Clone, Debug)]
 pub struct OpenAIClient {
     api_key: String,
@@ -70,58 +59,31 @@ impl OpenAIClient {
         }
     }
 
-    /// Generates and saves a cover image for the given markdown content
+    /// Generates and saves a cover image with an auto-generated filename.
     ///
-    /// This method combines scene description generation, DALL-E prompt creation,
-    /// image generation, and file saving into a single operation.
-    ///
-    /// # Arguments
-    ///
-    /// * `content` - The markdown content to analyze
-    /// * `file_path` - The path to the markdown file (used for determining save location)
-    /// * `base_filename` - Base name for the generated cover image
-    ///
-    /// # Returns
-    ///
-    /// The filename of the generated cover image
+    /// The image is saved next to `file_path` and the resulting filename is
+    /// returned so the caller can write it back into frontmatter.
     pub async fn generate_cover_image(
         &self,
         content: &str,
         file_path: &Path,
         base_filename: &str,
     ) -> Result<String> {
-        // Generate scene description from content
-        let scene_description = match self.generate_scene_description(content).await {
-            Ok(desc) => {
-                info!("Generated scene description: {}", desc);
-                desc
-            }
-            Err(e) => {
-                FORMATTER.print_error(&FORMATTER.format_scene_description_failure(&e.to_string()));
-                return Err(e);
-            }
-        };
+        let prompt = build_cover_prompt(content);
+        info!("Generating cover image with OpenAI gpt-image-2");
+        println!(
+            "{}",
+            FORMATTER.format_image_prompt("OpenAI (gpt-image-2): 微信封面生成")
+        );
 
-        // Create DALL-E prompt
-        let dalle_prompt = self.create_dalle_prompt(&scene_description);
-        info!("DALL-E prompt: {}", dalle_prompt);
-
-        // Show prompt in console for user visibility
-        println!("{}", FORMATTER.format_image_prompt(&dalle_prompt));
-
-        // Generate image
-        let image_url = match self.generate_image(&dalle_prompt).await {
-            Ok(url) => {
-                info!("Successfully generated image URL: {}", url);
-                url
-            }
+        let image_url = match self.generate_image(&prompt).await {
+            Ok(url) => url,
             Err(e) => {
                 FORMATTER.print_error(&FORMATTER.format_image_generation_failure(&e.to_string()));
                 return Err(e);
             }
         };
 
-        // Create filename for the cover image
         let cover_filename = format!(
             "{}_cover_{}.png",
             base_filename,
@@ -132,19 +94,11 @@ impl OpenAIClient {
             .ok_or_else(|| Error::generic("Failed to get parent directory"))?
             .join(&cover_filename);
 
-        // Download and save the image
         self.download_image(&image_url, &cover_path).await?;
-
         Ok(cover_filename)
     }
 
     /// Generates and saves a cover image to a specific path
-    ///
-    /// # Arguments
-    ///
-    /// * `content` - The markdown content to analyze
-    /// * `_markdown_file_path` - The path to the markdown file (for context)
-    /// * `target_cover_path` - The exact path where to save the cover image
     pub async fn generate_cover_image_to_path(
         &self,
         content: &str,
@@ -153,38 +107,21 @@ impl OpenAIClient {
     ) -> Result<()> {
         println!("{}", FORMATTER.format_target_path(target_cover_path));
 
-        // Generate scene description from content
-        let scene_description = match self.generate_scene_description(content).await {
-            Ok(desc) => {
-                info!("Generated scene description: {}", desc);
-                desc
-            }
-            Err(e) => {
-                FORMATTER.print_error(&FORMATTER.format_scene_description_failure(&e.to_string()));
-                return Err(e);
-            }
-        };
+        let prompt = build_cover_prompt(content);
+        info!("Generating cover image with OpenAI gpt-image-2");
+        println!(
+            "{}",
+            FORMATTER.format_image_prompt("OpenAI (gpt-image-2): 微信封面生成")
+        );
 
-        // Create DALL-E prompt
-        let dalle_prompt = self.create_dalle_prompt(&scene_description);
-        info!("DALL-E prompt: {}", dalle_prompt);
-
-        // Show prompt in console for user visibility
-        println!("{}", FORMATTER.format_image_prompt(&dalle_prompt));
-
-        // Generate image
-        let image_url = match self.generate_image(&dalle_prompt).await {
-            Ok(url) => {
-                info!("Successfully generated image URL: {}", url);
-                url
-            }
+        let image_url = match self.generate_image(&prompt).await {
+            Ok(url) => url,
             Err(e) => {
                 FORMATTER.print_error(&FORMATTER.format_image_generation_failure(&e.to_string()));
                 return Err(e);
             }
         };
 
-        // Download and save the image to the specified path
         match self.download_image(&image_url, target_cover_path).await {
             Ok(()) => {
                 println!("{}", FORMATTER.format_image_saved(target_cover_path));
@@ -236,73 +173,10 @@ impl OpenAIClient {
 }
 
 #[async_trait::async_trait]
-impl SceneDescriptionGenerator for OpenAIClient {
-    async fn generate_scene_description(&self, content: &str) -> Result<String> {
-        // Try with GPT-5-mini first
-        let request_body = json!({
-            "model": "gpt-5-mini",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "你是一位为微信公众号技术文章设计封面的艺术总监。\
-                     请仔细阅读文章的标题和描述，找到一个有创意的视觉隐喻来直观表达文章的核心思想。\
-                     读者仅凭图片就应该能感受到文章的主题。\
-                     不要生成通用的科技素材图，而是思考什么象征性的场景能精准捕捉这篇文章的独特主题。\
-                     用2-3句话描述一个生动的视觉场景，包括：隐喻场景、氛围光影、色彩基调（偏好电光蓝、暖琥珀、深紫色系，深色背景）。\
-                     画面要有故事感，作为缩略图必须醒目——主体突出、构图简洁、电影感。"
-                },
-                {
-                    "role": "user",
-                    "content": format!("Article content:\n\n{}\n\nScene description:", {
-                        if content.len() > 2000 {
-                            let mut end = 2000;
-                            while !content.is_char_boundary(end) { end -= 1; }
-                            &content[..end]
-                        } else {
-                            content
-                        }
-                    })
-                }
-            ],
-            "temperature": 1
-        });
-
-        let response_json = self.post_request("chat/completions", request_body).await?;
-
-        let mut scene_description = response_json["choices"][0]["message"]["content"]
-            .as_str()
-            .unwrap_or("")
-            .trim()
-            .to_string();
-
-        if scene_description.is_empty() {
-            scene_description = "一座发光的晶体数据结构悬浮在深邃的太空中，几何切面折射出电光蓝和琥珀色的光芒。发光粒子流环绕其间，暗示着信息在精密系统中优雅流动。".to_string();
-        }
-
-        Ok(scene_description)
-    }
-}
-
-impl PromptBuilder for OpenAIClient {
-    fn create_dalle_prompt(&self, scene_description: &str) -> String {
-        format!(
-            "生成一张宽幅封面插图（16:9比例）。\
-             图像必须体现下方描述的具体场景，不要生成通用科技素材。\n\n\
-             场景：{}\n\n\
-             风格：高端数字艺术，优雅精致。\
-             色调以电光蓝、暖琥珀、深紫色为主，深色背景。\
-             运用体积光、电影级景深、充足留白。\
-             作为缩略图必须醒目：高对比度、主体突出、禁止任何文字或水印。",
-            scene_description
-        )
-    }
-}
-
-#[async_trait::async_trait]
 impl ImageGenerator for OpenAIClient {
     async fn generate_image(&self, prompt: &str) -> Result<String> {
         let request_body = json!({
-            "model": "gpt-image-1.5",
+            "model": "gpt-image-2",
             "prompt": prompt,
             "size": "1536x1024",  // Close to 16:9 aspect ratio
             "quality": "high",
@@ -315,11 +189,9 @@ impl ImageGenerator for OpenAIClient {
             .post_request("images/generations", request_body)
             .await?;
 
-        // Extract base64 data from response
         let base64_data = if let Some(b64) = response_json["data"][0]["b64_json"].as_str() {
             b64.to_string()
         } else if let Some(url) = response_json["data"][0]["url"].as_str() {
-            // If URL is returned instead of base64, return it as-is
             return Ok(url.to_string());
         } else {
             return Err(Error::openai(format!(
@@ -330,19 +202,15 @@ impl ImageGenerator for OpenAIClient {
             )));
         };
 
-        // Return base64 data prefixed with a marker
         Ok(format!("base64:{}", base64_data))
     }
 
     async fn download_image(&self, url: &str, file_path: &Path) -> Result<()> {
-        // Check if this is base64 data or a URL
         let image_bytes = if let Some(base64_str) = url.strip_prefix("base64:") {
-            // Decode base64 data
             base64::engine::general_purpose::STANDARD
                 .decode(base64_str)
                 .map_err(|e| Error::openai(format!("Failed to decode base64 image: {}", e)))?
         } else {
-            // Download from URL
             let response = self.http_client.get(url).send().await?;
 
             if !response.status().is_success() {
@@ -356,13 +224,11 @@ impl ImageGenerator for OpenAIClient {
             bytes.to_vec()
         };
 
-        // Ensure the directory exists
         if let Some(parent) = file_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
 
         tokio::fs::write(file_path, image_bytes).await?;
-
         Ok(())
     }
 }
@@ -375,7 +241,6 @@ pub struct OpenAIClientBuilder {
 }
 
 impl OpenAIClientBuilder {
-    /// Creates a new builder
     pub fn new() -> Self {
         Self {
             api_key: None,
@@ -384,25 +249,21 @@ impl OpenAIClientBuilder {
         }
     }
 
-    /// Sets the API key
     pub fn with_api_key(mut self, api_key: String) -> Self {
         self.api_key = Some(api_key);
         self
     }
 
-    /// Sets a custom base URL
     pub fn with_base_url(mut self, base_url: String) -> Self {
         self.base_url = Some(base_url);
         self
     }
 
-    /// Sets a custom HTTP client
     pub fn with_http_client(mut self, client: Client) -> Self {
         self.http_client = Some(client);
         self
     }
 
-    /// Builds the OpenAI client
     pub fn build(self) -> Result<OpenAIClient> {
         let api_key = self
             .api_key
@@ -452,16 +313,6 @@ mod tests {
     }
 
     #[test]
-    fn test_create_dalle_prompt() {
-        let client = OpenAIClient::new("test-key".to_string());
-        let scene_description = "A serene forest with morning mist";
-        let prompt = client.create_dalle_prompt(scene_description);
-
-        assert!(prompt.contains("高端数字艺术"));
-        assert!(prompt.contains("A serene forest with morning mist"));
-    }
-
-    #[test]
     fn test_openai_client_builder() {
         let client = OpenAIClientBuilder::new()
             .with_api_key("test-key".to_string())
@@ -498,16 +349,7 @@ mod tests {
             .join("image.png");
 
         let _client = OpenAIClient::new("test-key".to_string());
-
-        // This test would require mocking the HTTP client to avoid making real requests
-        // For now, we'll just test the directory creation logic indirectly
-
-        // Create a mock response scenario
-        // In a real test, we'd use a mock server or dependency injection
         assert!(!nested_path.exists());
-
-        // The actual download_image call would be mocked in integration tests
-        // Here we just verify the path logic
         assert!(nested_path.parent().is_some());
     }
 
