@@ -1,3 +1,8 @@
+## [0.7.1] - 2026-04-28
+
+### 🚀 Features
+
+- Use gpt-image-2 and bump version
 ## [0.7.0] - 2026-03-13
 
 ### 🚀 Features
