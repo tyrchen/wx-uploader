@@ -5,6 +5,7 @@
 
 use crate::error::{Error, Result};
 use crate::gemini::GeminiClient;
+use crate::image_prompt::build_cover_context;
 use crate::markdown::{parse_markdown_file, update_frontmatter, write_markdown_file};
 use crate::models::{Config, Frontmatter};
 use crate::openai::OpenAIClient;
@@ -203,6 +204,8 @@ fn prepare_upload_files(
 }
 
 /// Trait for uploading content to WeChat
+// async_trait adds #[must_use] to methods returning already-must-use boxed futures.
+#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 pub trait WeChatUploader {
     /// Uploads a file to WeChat and returns the draft ID
@@ -346,7 +349,7 @@ pub async fn upload_file(
     };
 
     // Handle cover image processing if needed
-    let cover_updated = process_cover_image(&mut frontmatter, path, config, verbose).await?;
+    let cover_updated = process_cover_image(&mut frontmatter, &body, path, config, verbose).await?;
 
     // Save frontmatter if cover was updated
     if cover_updated {
@@ -405,6 +408,7 @@ async fn parse_and_check_file(
 /// Processes cover image generation and updating
 async fn process_cover_image(
     frontmatter: &mut Frontmatter,
+    body: &str,
     path: &Path,
     config: &Config,
     verbose: bool,
@@ -429,14 +433,8 @@ async fn process_cover_image(
         info!("Using model '{}' for cover generation", model_name);
     }
 
-    // Build content for image generation: title + description gives the best context
-    let image_content = match &frontmatter.title {
-        Some(title) => format!(
-            "Title: {}\n\nDescription: {}",
-            title, frontmatter.description
-        ),
-        None => frontmatter.description.clone(),
-    };
+    let image_content =
+        build_cover_context(frontmatter.title.as_deref(), &frontmatter.description, body);
 
     // Generate the cover image
     match &frontmatter.cover {

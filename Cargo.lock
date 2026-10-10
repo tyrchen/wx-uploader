@@ -3983,6 +3983,7 @@ dependencies = [
  "base64",
  "clap",
  "colored",
+ "comrak",
  "image",
  "regex",
  "reqwest 0.13.3",
