@@ -1,3 +1,12 @@
+## [0.7.2] - 2026-10-10
+
+### 🐛 Bug Fixes
+
+- Improve article cover relevance and WeChat composition (#11)
+
+### ⚙️ Miscellaneous Tasks
+
+- Bump version
 ## [0.7.1] - 2026-04-28
 
 ### 🚀 Features
