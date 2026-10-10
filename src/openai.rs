@@ -13,6 +13,8 @@ use std::path::Path;
 use tracing::info;
 
 /// Trait for generating images from text descriptions
+// async_trait adds #[must_use] to methods returning already-must-use boxed futures.
+#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 pub trait ImageGenerator {
     /// Generates an image from a text prompt and returns either a URL or

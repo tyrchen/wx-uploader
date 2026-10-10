@@ -204,6 +204,8 @@ fn prepare_upload_files(
 }
 
 /// Trait for uploading content to WeChat
+// async_trait adds #[must_use] to methods returning already-must-use boxed futures.
+#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 pub trait WeChatUploader {
     /// Uploads a file to WeChat and returns the draft ID
