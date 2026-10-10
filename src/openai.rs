@@ -178,10 +178,10 @@ impl ImageGenerator for OpenAIClient {
         let request_body = json!({
             "model": "gpt-image-2",
             "prompt": prompt,
-            "size": "1536x1024",  // Close to 16:9 aspect ratio
-            "quality": "high",
-            "output_format": "jpeg",
-            "output_compression": 80,
+            // Near WeChat's 2.35:1 ratio, within GPT Image 2's 16-pixel / minimum-area limits.
+            "size": "1280x544",
+            "quality": "medium",
+            "output_format": "png",
             "n": 1
         });
 
@@ -222,6 +222,26 @@ impl ImageGenerator for OpenAIClient {
 
             let bytes = response.bytes().await?;
             bytes.to_vec()
+        };
+
+        // Generated covers are PNG; explicit .jpg/.webp cover paths must match their bytes.
+        let image_bytes = match image::ImageFormat::from_path(file_path) {
+            Ok(format) if image::guess_format(&image_bytes).ok() != Some(format) => {
+                let image = image::load_from_memory(&image_bytes)
+                    .map_err(|e| Error::openai(format!("Failed to decode generated image: {e}")))?;
+                let mut output = std::io::Cursor::new(Vec::new());
+                if format == image::ImageFormat::Jpeg {
+                    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output, 95)
+                        .encode_image(&image)
+                        .map_err(|e| Error::openai(format!("Failed to encode cover image: {e}")))?;
+                } else {
+                    image
+                        .write_to(&mut output, format)
+                        .map_err(|e| Error::openai(format!("Failed to encode cover image: {e}")))?;
+                }
+                output.into_inner()
+            }
+            _ => image_bytes,
         };
 
         if let Some(parent) = file_path.parent() {
@@ -340,7 +360,62 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_download_image_creates_directory() {
+    async fn test_generate_cover_sends_article_context_and_saves_png() {
+        use crate::image_prompt::build_cover_context;
+        use image::{DynamicImage, ImageFormat};
+        use std::{io::Cursor, time::Duration};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let mut png = Cursor::new(Vec::new());
+        DynamicImage::new_rgb8(1280, 544)
+            .write_to(&mut png, ImageFormat::Png)
+            .unwrap();
+        let image_data = png.into_inner();
+        let response = json!({"data": [{
+            "b64_json": base64::engine::general_purpose::STANDARD.encode(&image_data)
+        }]})
+        .to_string();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let request_task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 4096];
+            let (body_start, body_len) = loop {
+                let count = stream.read(&mut buffer).await.unwrap();
+                assert!(count > 0, "incomplete HTTP request");
+                request.extend_from_slice(&buffer[..count]);
+                if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&request[..end]);
+                    assert!(headers.starts_with("POST /v1/images/generations "));
+                    let length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().unwrap())
+                        })
+                        .unwrap();
+                    break (end + 4, length);
+                }
+            };
+            while request.len() < body_start + body_len {
+                let count = stream.read(&mut buffer).await.unwrap();
+                assert!(count > 0, "incomplete HTTP body");
+                request.extend_from_slice(&buffer[..count]);
+            }
+            let payload: Value =
+                serde_json::from_slice(&request[body_start..body_start + body_len]).unwrap();
+            let http_response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response.len(),
+                response
+            );
+            stream.write_all(http_response.as_bytes()).await.unwrap();
+            payload
+        });
+
         let temp_dir = TempDir::new().unwrap();
         let nested_path = temp_dir
             .path()
@@ -348,9 +423,35 @@ mod tests {
             .join("directory")
             .join("image.png");
 
-        let _client = OpenAIClient::new("test-key".to_string());
-        assert!(!nested_path.exists());
-        assert!(nested_path.parent().is_some());
+        let client = OpenAIClient::with_base_url("test-key".into(), format!("http://{address}/v1"));
+        let context = build_cover_context(
+            Some("Rust"),
+            "内存安全",
+            "## 核心机制\n多个读者或一个写者。",
+        );
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            client.generate_cover_image_to_path(&context, Path::new("article.md"), &nested_path),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let payload = request_task.await.unwrap();
+        assert_eq!(payload["model"], "gpt-image-2");
+        assert_eq!(payload["quality"], "medium");
+        assert_eq!(payload["size"], "1280x544");
+        assert_eq!(payload["output_format"], "png");
+        assert!(payload.get("output_compression").is_none());
+        assert!(
+            payload["prompt"]
+                .as_str()
+                .unwrap()
+                .contains("多个读者或一个写者")
+        );
+        let saved = tokio::fs::read(&nested_path).await.unwrap();
+        assert_eq!(saved, image_data);
+        assert_eq!(image::guess_format(&saved).unwrap(), ImageFormat::Png);
+        assert_eq!(image::image_dimensions(&nested_path).unwrap(), (1280, 544));
     }
 
     #[test]
@@ -362,5 +463,29 @@ mod tests {
         let error = Error::config("Invalid configuration");
         assert!(error.to_string().contains("Configuration error"));
         assert!(error.to_string().contains("Invalid configuration"));
+    }
+
+    #[tokio::test]
+    async fn test_png_response_is_encoded_for_explicit_jpeg_cover_path() {
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(32, 16)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let source = format!(
+            "base64:{}",
+            base64::engine::general_purpose::STANDARD.encode(png.into_inner())
+        );
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("cover.jpg");
+        OpenAIClient::new("test-key".into())
+            .download_image(&source, &path)
+            .await
+            .unwrap();
+        let bytes = tokio::fs::read(&path).await.unwrap();
+        assert_eq!(
+            image::guess_format(&bytes).unwrap(),
+            image::ImageFormat::Jpeg
+        );
+        assert_eq!(image::image_dimensions(path).unwrap(), (32, 16));
     }
 }

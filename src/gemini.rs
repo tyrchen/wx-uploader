@@ -130,7 +130,7 @@ impl GeminiClient {
             "generationConfig": {
                 "responseModalities": ["TEXT", "IMAGE"],
                 "imageConfig": {
-                    "aspectRatio": "16:9",
+                    "aspectRatio": "21:9",
                     "imageSize": "2K"
                 }
             }

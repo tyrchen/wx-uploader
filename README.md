@@ -27,8 +27,11 @@ Before using this tool, you need to set up the following environment variables:
 export WECHAT_APP_ID="your_app_id"
 export WECHAT_APP_SECRET="your_app_secret"
 
-# Optional: OpenAI API key for automatic cover image generation
+# Optional: OpenAI cover generation (frontmatter model: gpt)
 export OPENAI_API_KEY="your_openai_api_key"
+
+# Optional: Gemini cover generation (model: nb2, default, or nb)
+export GEMINI_API_KEY="your_gemini_api_key"
 ```
 
 ## Usage
@@ -57,7 +60,7 @@ wx-uploader ./2025/08/01-chat-with-ai.md
 
 1. The tool scans for markdown files with YAML frontmatter
 2. If a file doesn't have `published: true` in its frontmatter, it will be uploaded
-3. If no cover image is specified and OpenAI API key is available, generates a Studio Ghibli-style cover image using GPT-5 and gpt-image-2
+3. If the cover is missing, generates an editorial illustration using the selected image model and its API key
 4. When specifying a single file, it will be uploaded regardless of its publish status
 5. After successful upload, the frontmatter is updated with `published: draft` and the cover filename (if generated)
 
@@ -67,7 +70,8 @@ wx-uploader ./2025/08/01-chat-with-ai.md
 ---
 title: My Article Title
 published: draft  # or 'true' to skip upload
-cover: cover.png  # optional, auto-generated if missing and OpenAI key is set
+cover: cover.png  # optional; a missing image is generated
+model: gpt  # OpenAI; nb2 (default) and nb use Gemini
 description: Article description
 author: Author Name
 theme: lapis  # optional theme
@@ -78,36 +82,22 @@ Your markdown content here...
 
 ## AI Cover Generation
 
-When the `OPENAI_API_KEY` environment variable is set, the tool will automatically generate beautiful cover images for articles that don't have one specified.
+Set `model: gpt` in frontmatter and configure `OPENAI_API_KEY` to use OpenAI's `gpt-image-2`. Gemini remains available through `nb2` (default) and `nb`, with `GEMINI_API_KEY`.
 
-### How it works
+The title, description, section headings, and article prose are sent directly to the image model in one request. Code blocks and embedded image links are removed. Long articles retain excerpts from the beginning, middle, and conclusion within a Unicode character budget, so the model can use the argument rather than just the title.
 
-1. **Content Analysis**: GPT-5-mini analyzes your markdown content to create a vivid scene description
-2. **Prompt Generation**: Creates an optimized prompt for image generation focusing on Studio Ghibli-style artwork
-3. **Image Generation**: gpt-image-2 generates a high-quality 16:9 aspect ratio cover image
-4. **Auto-Save**: Downloads and saves the image in the same directory as your markdown file
-5. **Metadata Update**: Updates your frontmatter with the generated cover filename
+The prompt asks for a specific visual mechanism grounded in the article, with one focal subject and a consistent editorial illustration style. It keeps the important objects near the center for both the wide WeChat cover and square thumbnail, and excludes text, logos, and generic technology decoration.
 
-### Features
+OpenAI uses `quality: medium`, `1280x544` (approximately WeChat's 2.35:1 ratio), and lossless PNG output. This avoids the large vertical crop of the previous 1536x1024 output and removes JPEG compression. Gemini uses 21:9 at its existing 2K setting.
 
-- **Studio Ghibli Style**: Beautiful, artistic aesthetic with soft colors and natural elements
-- **Content-Aware**: Scene descriptions are based on your actual article content
-- **High Quality**: 1536x1024 resolution images optimized for web display
-- **Automatic Naming**: Generated files use unique names to prevent conflicts
-- **Graceful Fallback**: Continues normal upload process if image generation fails
-- **Base64 Support**: Handles both URL and base64-encoded image responses
+Images are saved next to the Markdown file, and the filename is written into frontmatter. Existing covers are reused; to regenerate, remove the cover file or remove the `cover` field. If generation fails, the tool continues its existing upload flow.
 
-### Example Output
-
-For an article about "Building Rust Applications", the AI might generate a scene like:
-> "A cozy workshop filled with intricate gears and glowing mechanical tools, where a craftsman carefully assembles clockwork mechanisms. Warm golden light streams through tall windows, illuminating floating rust particles that sparkle like fireflies in the dusty air."
-
-This becomes a beautiful Studio Ghibli-style cover image that visually represents your content.
+For an article about Rust borrowing, a suitable concept would show several reading paths sharing one resource, contrasted with a single exclusive writing path. This depicts the borrowing mechanism rather than using a generic workshop or gears.
 
 ## Features
 
 - 📝 **Batch Upload**: Process entire directories of markdown files
-- 🎨 **AI Cover Generation**: Automatic cover images using OpenAI's latest models
+- 🎨 **AI Cover Generation**: Automatic cover images using OpenAI or Gemini
 - 🔄 **Smart Processing**: Skip already published articles
 - 📊 **Progress Tracking**: Clear console output with colored status indicators
 - 🛡️ **Error Recovery**: Graceful handling of API failures

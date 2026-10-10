@@ -27,8 +27,11 @@ cargo install --path .
 export WECHAT_APP_ID="your_app_id"
 export WECHAT_APP_SECRET="your_app_secret"
 
-# 可选：用于自动生成封面图的 OpenAI API 密钥
+# 可选：OpenAI 题图生成（frontmatter 设置 model: gpt）
 export OPENAI_API_KEY="your_openai_api_key"
+
+# 可选：Gemini 题图生成（model: nb2，默认；或 nb）
+export GEMINI_API_KEY="your_gemini_api_key"
 ```
 
 ## 使用方法
@@ -57,7 +60,7 @@ wx-uploader ./2025/08/01-chat-with-ai.md
 
 1. 工具扫描带有 YAML frontmatter 的 Markdown 文件
 2. 如果文件的 frontmatter 中没有 `published: true`，则会被上传
-3. 如果没有指定封面图片且配置了 OpenAI API 密钥，将使用 GPT-5 和 gpt-image-2 生成吉卜力风格的封面图
+3. 封面缺失时，使用所选图像模型及其 API 密钥生成杂志插画风格的题图
 4. 指定单个文件时，无论其发布状态如何都会被上传
 5. 上传成功后，frontmatter 会更新为 `published: draft` 并包含生成的封面文件名（如果有）
 
@@ -67,7 +70,8 @@ wx-uploader ./2025/08/01-chat-with-ai.md
 ---
 title: 我的文章标题
 published: draft  # 或 'true' 以跳过上传
-cover: cover.png  # 可选，如果缺失且设置了 OpenAI 密钥则自动生成
+cover: cover.png  # 可选；文件缺失时自动生成
+model: gpt  # OpenAI；nb2（默认）和 nb 使用 Gemini
 description: 文章描述
 author: 作者姓名
 theme: lapis  # 可选主题
@@ -78,36 +82,22 @@ theme: lapis  # 可选主题
 
 ## AI 封面生成
 
-当设置了 `OPENAI_API_KEY` 环境变量时，工具会为没有指定封面的文章自动生成精美的封面图片。
+在 frontmatter 中设置 `model: gpt`，并配置 `OPENAI_API_KEY`，即可使用 OpenAI 的 `gpt-image-2`。也支持 Gemini 的 `nb2`（默认）和 `nb`，使用 `GEMINI_API_KEY`。
 
-### 工作原理
+生成器通过一次请求读取标题、description、章节标题和正文。代码块和图片链接会被过滤；长文按 Unicode 字符预算保留开头、中段和结论摘录，避免只根据标题猜测主题。
 
-1. **内容分析**：GPT-5-mini 分析您的 Markdown 内容以创建生动的场景描述
-2. **提示词生成**：创建优化的提示词，专注于吉卜力风格的艺术作品
-3. **图像生成**：gpt-image-2 生成高质量的 16:9 宽高比封面图片
-4. **自动保存**：下载并保存图片到与 Markdown 文件相同的目录
-5. **元数据更新**：使用生成的封面文件名更新 frontmatter
+提示词要求画面表达文章中的具体机制和对象关系，以一个主视觉为中心，采用统一的二维杂志插画工艺。关键元素集中在中央，兼顾微信宽幅封面和方形缩略图；禁止文字、商标和无关的泛化科技装饰。
 
-### 特性
+OpenAI 使用 `quality: medium`、`1280×544`（接近微信的 2.35:1 比例）和无损 PNG。不提高分辨率，避免旧版 1536×1024 输出的大幅纵向裁切及 JPEG 压缩。Gemini 使用 21:9，保持原有 2K 设置。
 
-- **吉卜力风格**：美丽的艺术美学，柔和的色彩和自然元素
-- **内容感知**：场景描述基于您的实际文章内容
-- **高质量**：1536x1024 分辨率，优化用于网页显示
-- **自动命名**：生成的文件使用唯一名称以防止冲突
-- **优雅降级**：如果图像生成失败，继续正常上传流程
-- **Base64 支持**：同时处理 URL 和 base64 编码的图像响应
+图片保存在 Markdown 文件旁，文件名写回 frontmatter。已有封面会被复用；需要重新生成时，删除封面文件或移除 `cover` 字段。生成失败时继续现有上传流程。
 
-### 输出示例
-
-对于一篇关于"构建 Rust 应用程序"的文章，AI 可能会生成这样的场景：
-> "一个舒适的工作坊，充满了精致的齿轮和发光的机械工具，工匠正在仔细组装发条装置。温暖的金色光线透过高窗洒进来，照亮了像萤火虫一样在尘埃中闪烁的漂浮锈粒子。"
-
-这会变成一幅美丽的吉卜力风格封面图片，视觉化地呈现您的内容。
+例如，讲解 Rust 借用规则的文章，可以用多条读取路径共享一个资源、与单条独占写入路径对照的画面，具体呈现借用机制。
 
 ## 功能特性
 
 - 📝 **批量上传**：处理整个目录的 Markdown 文件
-- 🎨 **AI 封面生成**：使用 OpenAI 最新模型自动生成封面图片
+- 🎨 **AI 封面生成**：使用 OpenAI 或 Gemini 自动生成封面图片
 - 🔄 **智能处理**：跳过已发布的文章
 - 📊 **进度跟踪**：带有彩色状态指示器的清晰控制台输出
 - 🛡️ **错误恢复**：优雅地处理 API 失败
