@@ -1,6 +1,6 @@
 [package]
 name = "wx-uploader"
-version = "0.7.2"
+version = "0.8.0"
 edition = "2024"
 authors = ["tyr.chen@gmail.com"]
 license = "MIT"
@@ -19,6 +19,8 @@ base64 = "0.22"
 clap = { version = "4", features = ["derive", "color", "help", "env"] }
 colored = "3"
 comrak = { version = "0.51", default-features = false }
+google-cloud-auth = "1.18"
+http = "1"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -30,6 +32,7 @@ tokio = { version = "1", features = ["full"] }
 walkdir = "2"
 wechat-pub-rs = "0.7"
 reqwest = { version = "0.13", features = ["json"] }
+resvg = "0.49"
 uuid = { version = "1", features = ["v4"] }
 image = "0.25"
 tempfile = "3"

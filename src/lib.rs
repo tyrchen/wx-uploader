@@ -35,10 +35,12 @@ pub mod cli;
 pub mod error;
 pub mod gemini;
 pub mod image_prompt;
+mod image_utils;
 pub mod markdown;
 pub mod models;
 pub mod openai;
 pub mod output;
+mod upload_images;
 pub mod wechat;
 
 pub use error::{Error, Result};

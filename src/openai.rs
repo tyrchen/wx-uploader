@@ -1,10 +1,9 @@
 //! OpenAI integration for cover image generation
 //!
-//! Single-stage flow: article content plus the shared style directives go
+//! Single-stage flow: the selected scene or metadata prompt and style go
 //! straight to gpt-image-2. No intermediate text model.
 
 use crate::error::{Error, Result};
-use crate::image_prompt::build_cover_prompt;
 use crate::output::{ApiErrorFormatter, FORMATTER, FilePathFormatter, OutputFormatter};
 use base64::Engine;
 use reqwest::Client;
@@ -61,24 +60,23 @@ impl OpenAIClient {
         }
     }
 
-    /// Generates and saves a cover image with an auto-generated filename.
+    /// Generates from a complete image prompt with an auto-generated filename.
     ///
     /// The image is saved next to `file_path` and the resulting filename is
     /// returned so the caller can write it back into frontmatter.
     pub async fn generate_cover_image(
         &self,
-        content: &str,
+        prompt: &str,
         file_path: &Path,
         base_filename: &str,
     ) -> Result<String> {
-        let prompt = build_cover_prompt(content);
         info!("Generating cover image with OpenAI gpt-image-2");
         println!(
             "{}",
             FORMATTER.format_image_prompt("OpenAI (gpt-image-2): 微信封面生成")
         );
 
-        let image_url = match self.generate_image(&prompt).await {
+        let image_url = match self.generate_image(prompt).await {
             Ok(url) => url,
             Err(e) => {
                 FORMATTER.print_error(&FORMATTER.format_image_generation_failure(&e.to_string()));
@@ -100,23 +98,22 @@ impl OpenAIClient {
         Ok(cover_filename)
     }
 
-    /// Generates and saves a cover image to a specific path
+    /// Generates from a complete image prompt to a specific path
     pub async fn generate_cover_image_to_path(
         &self,
-        content: &str,
+        prompt: &str,
         _markdown_file_path: &Path,
         target_cover_path: &Path,
     ) -> Result<()> {
         println!("{}", FORMATTER.format_target_path(target_cover_path));
 
-        let prompt = build_cover_prompt(content);
         info!("Generating cover image with OpenAI gpt-image-2");
         println!(
             "{}",
             FORMATTER.format_image_prompt("OpenAI (gpt-image-2): 微信封面生成")
         );
 
-        let image_url = match self.generate_image(&prompt).await {
+        let image_url = match self.generate_image(prompt).await {
             Ok(url) => url,
             Err(e) => {
                 FORMATTER.print_error(&FORMATTER.format_image_generation_failure(&e.to_string()));
@@ -226,25 +223,7 @@ impl ImageGenerator for OpenAIClient {
             bytes.to_vec()
         };
 
-        // Generated covers are PNG; explicit .jpg/.webp cover paths must match their bytes.
-        let image_bytes = match image::ImageFormat::from_path(file_path) {
-            Ok(format) if image::guess_format(&image_bytes).ok() != Some(format) => {
-                let image = image::load_from_memory(&image_bytes)
-                    .map_err(|e| Error::openai(format!("Failed to decode generated image: {e}")))?;
-                let mut output = std::io::Cursor::new(Vec::new());
-                if format == image::ImageFormat::Jpeg {
-                    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output, 95)
-                        .encode_image(&image)
-                        .map_err(|e| Error::openai(format!("Failed to encode cover image: {e}")))?;
-                } else {
-                    image
-                        .write_to(&mut output, format)
-                        .map_err(|e| Error::openai(format!("Failed to encode cover image: {e}")))?;
-                }
-                output.into_inner()
-            }
-            _ => image_bytes,
-        };
+        let image_bytes = crate::image_utils::encode_for_path(image_bytes, file_path)?;
 
         if let Some(parent) = file_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
@@ -362,8 +341,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_generate_cover_sends_article_context_and_saves_png() {
-        use crate::image_prompt::build_cover_context;
+    async fn test_generate_cover_sends_metadata_prompt_and_saves_png() {
+        use crate::image_prompt::build_cover_prompt;
+        use crate::models::Frontmatter;
         use image::{DynamicImage, ImageFormat};
         use std::{io::Cursor, time::Duration};
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -426,14 +406,14 @@ mod tests {
             .join("image.png");
 
         let client = OpenAIClient::with_base_url("test-key".into(), format!("http://{address}/v1"));
-        let context = build_cover_context(
-            Some("Rust"),
-            "内存安全",
-            "## 核心机制\n多个读者或一个写者。",
-        );
+        let frontmatter: Frontmatter = serde_yaml::from_str(
+            "title: Rust\ndescription: 多个读者或一个写者\ntags: [内存安全]\n",
+        )
+        .unwrap();
+        let prompt = build_cover_prompt(&frontmatter).unwrap();
         tokio::time::timeout(
             Duration::from_secs(5),
-            client.generate_cover_image_to_path(&context, Path::new("article.md"), &nested_path),
+            client.generate_cover_image_to_path(&prompt, Path::new("article.md"), &nested_path),
         )
         .await
         .unwrap()
@@ -444,6 +424,7 @@ mod tests {
         assert_eq!(payload["size"], "1280x544");
         assert_eq!(payload["output_format"], "png");
         assert!(payload.get("output_compression").is_none());
+        assert_eq!(payload["prompt"], prompt);
         assert!(
             payload["prompt"]
                 .as_str()

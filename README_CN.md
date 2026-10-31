@@ -30,7 +30,7 @@ export WECHAT_APP_SECRET="your_app_secret"
 # 可选：OpenAI 题图生成（frontmatter 设置 model: gpt）
 export OPENAI_API_KEY="your_openai_api_key"
 
-# 可选：Gemini 题图生成（model: nb2，默认；或 nb）
+# 可选：显式使用 Gemini Developer API（AI Studio），替代 Vertex AI
 export GEMINI_API_KEY="your_gemini_api_key"
 ```
 
@@ -71,8 +71,14 @@ wx-uploader ./2025/08/01-chat-with-ai.md
 title: 我的文章标题
 published: draft  # 或 'true' 以跳过上传
 cover: cover.png  # 可选；文件缺失时自动生成
-model: gpt  # OpenAI；nb2（默认）和 nb 使用 Gemini
+model: nb2  # 默认：Gemini Nano Banana 2.1；nb：Gemini Pro；gpt：OpenAI
 description: 文章描述
+tags: [Rust, 并发]
+cover_prompt: |  # 可选：直接描述想要的画面
+  多个读者围着一本展开的共享账本阅读；
+  右侧一名写作者在隔开的区域独自书写。
+cover_style: |  # 可选：覆盖默认的杂志插画风格
+  黑白木刻，轮廓清晰，细节克制。
 author: 作者姓名
 theme: lapis  # 可选主题
 ---
@@ -82,15 +88,37 @@ theme: lapis  # 可选主题
 
 ## AI 封面生成
 
-在 frontmatter 中设置 `model: gpt`，并配置 `OPENAI_API_KEY`，即可使用 OpenAI 的 `gpt-image-2`。也支持 Gemini 的 `nb2`（默认）和 `nb`，使用 `GEMINI_API_KEY`。
+封面生成默认使用 Gemini Nano Banana 2.1（`gemini-nano-banana-2.1`），在 frontmatter 中省略 `model` 或设置 `model: nb2` 即可。原有 `nb2` 别名现已指向 Nano Banana 2.1，详见[官方模型文档](https://ai.google.dev/gemini-api/docs/models/gemini-nano-banana-2.1)。
 
-生成器通过一次请求读取标题、description、章节标题和正文。代码块和图片链接会被过滤；长文按 Unicode 字符预算保留开头、中段和结论摘录，避免只根据标题猜测主题。
+未设置 `GEMINI_API_KEY` 或其值为空时，Gemini 默认通过 **Google Cloud Vertex AI + ADC** 调用，使用 `aiplatform.googleapis.com`，由选定资源项目的 Cloud Billing 计费。以下为 Nushell 配置命令：
 
-提示词要求画面表达文章中的具体机制和对象关系，以一个主视觉为中心，采用统一的二维杂志插画工艺。关键元素集中在中央，兼顾微信宽幅封面和方形缩略图；禁止文字、商标和无关的泛化科技装饰。
+```nu
+let project = "YOUR_PROJECT_ID"
+^gcloud services enable aiplatform.googleapis.com --project $project
+^gcloud auth application-default login
+^gcloud auth application-default set-quota-project $project
+$env.GOOGLE_CLOUD_PROJECT = $project
+$env.GOOGLE_CLOUD_LOCATION = "global"
+hide-env --ignore-errors GEMINI_API_KEY
+```
 
-OpenAI 使用 `quality: medium`、`1280×544`（接近微信的 2.35:1 比例）和无损 PNG。不提高分辨率，避免旧版 1536×1024 输出的大幅纵向裁切及 JPEG 压缩。Gemini 使用 21:9，保持原有 2K 设置。
+Vertex 资源项目依次取自 `GOOGLE_CLOUD_PROJECT`、`GCLOUD_PROJECT`、ADC 配额项目。区域由 `GOOGLE_CLOUD_LOCATION` 指定，默认 `global`；Nano Banana 2.1 使用 global 端点。账号需要具有该项目的 Vertex AI 和服务使用权限。Vertex AI 使用普通 ADC 登录即可获得的 `cloud-platform` scope；已有 ADC 包含此 scope 时可直接复用。详见 [Google Cloud ADC 官方指南](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/start/gcp-auth)。
+
+Google 官方 Rust 认证库会依次查找 `GOOGLE_APPLICATION_CREDENTIALS` 指定的文件、本地 ADC 文件和 Google Cloud 元数据服务，自动获取、缓存、刷新短期 OAuth access token，无需导出 token，运行时也无需调用 `gcloud`。多篇文章共享认证凭据和 token 缓存。ADC 配额项目通过 `x-goog-user-project` 发送，也可用 `GOOGLE_CLOUD_QUOTA_PROJECT` 覆盖；服务账号没有 ADC 配额项目时，需要显式设置 `GOOGLE_CLOUD_PROJECT`。适用的 GCP 赠金由资源项目所关联账单账号的 Cloud Billing 处理。
+
+显式设置非空 `GEMINI_API_KEY` 会选择 **Gemini Developer API**（`generativelanguage.googleapis.com`），走 AI Studio 账单规则，可能要求预付余额；ADC 默认使用 Vertex AI。设置 `model: nb` 可使用 Gemini Pro，认证方式相同；设置 `model: gpt` 可使用 OpenAI 的 `gpt-image-2`（`OPENAI_API_KEY`）。
+
+生图使用两套不同的提示词：非空 `cover_prompt` 直接指定画面，模型按描述呈现主体、动作和关系；省略或留空时，仅根据 `title`、`description`、`tags` 构思封面。`description` 也可写作 `desc`；`tags` 支持 YAML 列表或字符串。正文、章节标题和其他 frontmatter 字段不进入生图请求。画面描述和主题元数据都缺失时，提示警告并跳过生图。
+
+`cover_style` 在两种模式下都生效，替换默认画风，因此可自定义木刻、3D 黏土等风格。省略或留空时，默认使用二维杂志插画、水粉与丝网印刷质感。两套提示词均要求关键元素居中，兼顾微信宽幅封面和方形缩略图，禁止文字、商标、水印和边框；元数据模式要求一个主视觉、最多两个辅助元素。画面描述最多取 4,000 个 Unicode 字符，风格最多 1,200 个；标题、description、tags 分别最多 320、1,600、512 个字符，列表 tags 最多取 16 项。正常情况下只需一次生图请求，无需额外的摘要模型。
+
+OpenAI 使用 `quality: medium`、`1280×544`（接近微信的 2.35:1 比例）和无损 PNG。不提高分辨率，避免旧版 1536×1024 输出的大幅纵向裁切及 JPEG 压缩。Gemini 使用 21:9、1K 分辨率。
 
 图片保存在 Markdown 文件旁，文件名写回 frontmatter。已有封面会被复用；需要重新生成时，删除封面文件或移除 `cover` 字段。生成失败时继续现有上传流程。
+
+上传前会将本地及远程 SVG/SVGZ 图片引用渲染为临时 PNG，使用系统字体、2 倍分辨率，单边最大 4096 像素；封面无需裁切时也会执行。上传副本和临时图片统一放在独立的系统临时目录中。本地图片按原文目录解析后复制，未转换的封面使用原文件的绝对路径；Markdown 保留原文件名以兼容 Mermaid。上传结束后删除整个临时目录，包括 Mermaid 生成的文件。原 SVG 和原文中的图片引用保持不变。生成封面的实际编码与扩展名一致；已有格式不匹配的封面（如 PNG 内容保存成 `.jpg`）会在上传副本中转换为正确格式。
+
+微信摘要使用 `description`（或 `desc`），缺失时从正文提取。上传副本会合并摘要中的换行和多余空白，并将超长摘要截断、添加省略号。最终提交值限制在 120 个 UTF-16 单元内（普通汉字计 1、增补字符如 emoji 计 2，包含省略号及上传解析器保留的 YAML 引号）。原文摘要和生图使用的完整描述保持不变。
 
 例如，讲解 Rust 借用规则的文章，可以用多条读取路径共享一个资源、与单条独占写入路径对照的画面，具体呈现借用机制。
 

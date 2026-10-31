@@ -5,203 +5,20 @@
 
 use crate::error::{Error, Result};
 use crate::gemini::GeminiClient;
-use crate::image_prompt::build_cover_context;
+use crate::image_prompt::build_cover_prompt;
 use crate::markdown::{parse_markdown_file, update_frontmatter, write_markdown_file};
 use crate::models::{Config, Frontmatter};
 use crate::openai::OpenAIClient;
 use crate::output::{FORMATTER, FilePathFormatter, OutputFormatter};
-use image::GenericImageView;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 use walkdir::WalkDir;
 
-/// WeChat cover image aspect ratio (2.35:1)
-const WECHAT_COVER_ASPECT_RATIO: f64 = 2.35;
-
 // Re-export the WeChat client type
 pub use wechat_pub_rs::WeChatClient;
 
-use std::io::Write;
-use tempfile::NamedTempFile;
-
-/// Holds temporary files for upload, automatically cleaned up when dropped.
-pub struct TempUploadFiles {
-    /// Temp markdown file (in same dir as original for relative path resolution)
-    pub markdown: NamedTempFile,
-    /// Temp cropped cover image (in system temp dir)
-    pub cover: NamedTempFile,
-}
-
-/// Crops an image to WeChat cover aspect ratio (2.35:1) and saves to a temp file.
-///
-/// Returns a NamedTempFile handle, or None if no cropping was needed.
-fn crop_cover_to_temp(image_path: &Path) -> Result<Option<NamedTempFile>> {
-    use image::ImageReader;
-    use std::io::Cursor;
-
-    // Read the image file
-    let image_bytes = std::fs::read(image_path)
-        .map_err(|e| Error::generic(format!("Failed to read image file: {}", e)))?;
-
-    let img = ImageReader::new(Cursor::new(&image_bytes))
-        .with_guessed_format()
-        .map_err(|e| Error::generic(format!("Failed to read image format: {}", e)))?
-        .decode()
-        .map_err(|e| Error::generic(format!("Failed to decode image: {}", e)))?;
-
-    let (width, height) = img.dimensions();
-    let current_ratio = width as f64 / height as f64;
-
-    // If already at or wider than 2.35:1, no cropping needed
-    if current_ratio >= WECHAT_COVER_ASPECT_RATIO {
-        info!(
-            "Image already at or wider than 2.35:1 ratio (current: {:.2}:1), skipping crop",
-            current_ratio
-        );
-        return Ok(None);
-    }
-
-    // Calculate new height for 2.35:1 ratio, keeping width
-    let new_height = (width as f64 / WECHAT_COVER_ASPECT_RATIO).round() as u32;
-
-    // Center crop vertically
-    let y_offset = (height - new_height) / 2;
-
-    info!(
-        "Cropping cover image from {}x{} to {}x{} (2.35:1 ratio for WeChat)",
-        width, height, width, new_height
-    );
-
-    let cropped = img.crop_imm(0, y_offset, width, new_height);
-
-    // Determine output format and extension based on original file
-    let extension = image_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("jpg");
-    let format = match extension {
-        "png" => image::ImageFormat::Png,
-        "jpg" | "jpeg" => image::ImageFormat::Jpeg,
-        "webp" => image::ImageFormat::WebP,
-        _ => image::ImageFormat::Jpeg,
-    };
-
-    // Create temp file in system temp dir
-    let mut temp_file = tempfile::Builder::new()
-        .prefix("wx_cover_")
-        .suffix(&format!(".{}", extension))
-        .tempfile()
-        .map_err(|e| Error::generic(format!("Failed to create temp cover file: {}", e)))?;
-
-    // Encode and write to temp file
-    let mut output = Cursor::new(Vec::new());
-    cropped
-        .write_to(&mut output, format)
-        .map_err(|e| Error::generic(format!("Failed to encode cropped image: {}", e)))?;
-
-    temp_file
-        .write_all(&output.into_inner())
-        .map_err(|e| Error::generic(format!("Failed to write temp cropped image: {}", e)))?;
-    temp_file
-        .flush()
-        .map_err(|e| Error::generic(format!("Failed to flush temp file: {}", e)))?;
-
-    info!(
-        "Created temp cropped cover at: {}",
-        temp_file.path().display()
-    );
-    Ok(Some(temp_file))
-}
-
-/// Converts relative image paths in markdown body to absolute paths.
-fn make_image_paths_absolute(body: &str, base_dir: &Path) -> String {
-    use regex::Regex;
-
-    // Match markdown image syntax: ![alt](path)
-    let re = Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)").unwrap();
-
-    re.replace_all(body, |caps: &regex::Captures| {
-        let alt = &caps[1];
-        let path = &caps[2];
-
-        // Skip URLs and already absolute paths
-        if path.starts_with("http://") || path.starts_with("https://") || path.starts_with('/') {
-            return caps[0].to_string();
-        }
-
-        // Convert relative path to absolute
-        let abs_path = base_dir.join(path);
-        format!("![{}]({})", alt, abs_path.display())
-    })
-    .to_string()
-}
-
-/// Prepares temp files for WeChat upload with cropped cover.
-///
-/// Both files are created in the system temp directory.
-/// Image paths in the markdown are converted to absolute paths.
-fn prepare_upload_files(
-    markdown_path: &Path,
-    frontmatter: &Frontmatter,
-    body: &str,
-) -> Result<Option<TempUploadFiles>> {
-    // Check if there's a cover to process
-    let Some(cover_filename) = &frontmatter.cover else {
-        return Ok(None);
-    };
-
-    // Resolve cover path
-    let (cover_path, exists) = resolve_and_check_cover_path(markdown_path, cover_filename);
-    if !exists {
-        return Ok(None);
-    }
-
-    // Crop cover to temp file (in system temp dir)
-    let Some(temp_cover) = crop_cover_to_temp(&cover_path)? else {
-        // No cropping needed, use original files
-        return Ok(None);
-    };
-
-    // Get absolute markdown directory for resolving relative image paths
-    let abs_markdown_path = markdown_path
-        .canonicalize()
-        .map_err(|e| Error::generic(format!("Failed to canonicalize markdown path: {}", e)))?;
-    let markdown_dir = abs_markdown_path
-        .parent()
-        .ok_or_else(|| Error::generic("Markdown file has no parent directory"))?;
-
-    // Create temp markdown in system temp dir with absolute image paths
-    let mut temp_frontmatter = frontmatter.clone();
-    temp_frontmatter.set_cover(temp_cover.path().to_string_lossy().to_string());
-
-    // Convert relative image paths to absolute
-    let body_with_abs_paths = make_image_paths_absolute(body, markdown_dir);
-
-    let mut temp_markdown = tempfile::Builder::new()
-        .prefix("wx_upload_")
-        .suffix(".md")
-        .tempfile()
-        .map_err(|e| Error::generic(format!("Failed to create temp markdown file: {}", e)))?;
-
-    let temp_content = crate::markdown::format_markdown(&temp_frontmatter, &body_with_abs_paths)?;
-    temp_markdown
-        .write_all(temp_content.as_bytes())
-        .map_err(|e| Error::generic(format!("Failed to write temp markdown: {}", e)))?;
-    temp_markdown
-        .flush()
-        .map_err(|e| Error::generic(format!("Failed to flush temp markdown: {}", e)))?;
-
-    info!(
-        "Created temp files - markdown: {}, cover: {}",
-        temp_markdown.path().display(),
-        temp_cover.path().display()
-    );
-
-    Ok(Some(TempUploadFiles {
-        markdown: temp_markdown,
-        cover: temp_cover,
-    }))
-}
+pub use crate::upload_images::TempUploadFiles;
+use crate::upload_images::prepare_upload_files;
 
 /// Trait for uploading content to WeChat
 // async_trait adds #[must_use] to methods returning already-must-use boxed futures.
@@ -279,20 +96,19 @@ fn resolve_backend(frontmatter: &Frontmatter, config: &Config) -> Result<ImageBa
 
     match model {
         "nb2" | "nb" => {
-            let Some(api_key) = config.gemini_api_key.as_ref() else {
-                return Err(Error::config(format!(
-                    "GEMINI_API_KEY required for model '{}'. Set GEMINI_API_KEY or use model: gpt in frontmatter.",
-                    model
-                )));
-            };
             let model_id: &'static str = match model {
                 "nb" => "gemini-3-pro-image-preview",
-                _ => "gemini-3.1-flash-image-preview",
+                _ => "gemini-nano-banana-2.1",
             };
-            Ok(ImageBackend::Gemini(GeminiClient::new(
-                api_key.clone(),
-                model_id,
-            )))
+            let client = match config
+                .gemini_api_key
+                .as_ref()
+                .filter(|key| !key.trim().is_empty())
+            {
+                Some(api_key) => GeminiClient::new(api_key.clone(), model_id),
+                None => GeminiClient::from_adc(model_id),
+            };
+            Ok(ImageBackend::Gemini(client))
         }
         "gpt" => {
             let Some(api_key) = config.openai_api_key.as_ref() else {
@@ -349,7 +165,7 @@ pub async fn upload_file(
     };
 
     // Handle cover image processing if needed
-    let cover_updated = process_cover_image(&mut frontmatter, &body, path, config, verbose).await?;
+    let cover_updated = process_cover_image(&mut frontmatter, path, config, verbose).await?;
 
     // Save frontmatter if cover was updated
     if cover_updated {
@@ -359,18 +175,12 @@ pub async fn upload_file(
         }
     }
 
-    // Prepare temp files with cropped cover for upload
-    // The TempUploadFiles struct keeps files alive until dropped
-    let temp_files = prepare_upload_files(path, &frontmatter, &body)?;
-
-    // Use temp markdown if available, otherwise use original
-    let upload_path = temp_files
-        .as_ref()
-        .map(|tf| tf.markdown.path())
-        .unwrap_or(path);
+    // Keep the private upload directory alive for the entire request.
+    let temp_files = prepare_upload_files(path, &frontmatter, &body).await?;
 
     // Execute the WeChat upload (display original path, upload from temp)
-    let upload_result = execute_wechat_upload(client, upload_path, path, verbose).await;
+    let upload_result =
+        execute_wechat_upload(client, temp_files.markdown.path(), path, verbose).await;
 
     // Temp files are automatically cleaned up when temp_files is dropped
     drop(temp_files);
@@ -408,7 +218,6 @@ async fn parse_and_check_file(
 /// Processes cover image generation and updating
 async fn process_cover_image(
     frontmatter: &mut Frontmatter,
-    body: &str,
     path: &Path,
     config: &Config,
     verbose: bool,
@@ -422,7 +231,7 @@ async fn process_cover_image(
     let backend = match resolve_backend(frontmatter, config) {
         Ok(backend) => backend,
         Err(e) => {
-            // Missing API key — warn and continue without cover
+            // Invalid backend configuration — warn and continue without cover
             FORMATTER.print_warning(&e.to_string());
             return Ok(false);
         }
@@ -433,8 +242,13 @@ async fn process_cover_image(
         info!("Using model '{}' for cover generation", model_name);
     }
 
-    let image_content =
-        build_cover_context(frontmatter.title.as_deref(), &frontmatter.description, body);
+    let image_prompt = match build_cover_prompt(frontmatter) {
+        Ok(prompt) => prompt,
+        Err(error) => {
+            FORMATTER.print_warning(&error.to_string());
+            return Ok(false);
+        }
+    };
 
     // Generate the cover image
     match &frontmatter.cover {
@@ -446,7 +260,7 @@ async fn process_cover_image(
                 .unwrap_or("article");
 
             match backend
-                .generate_cover_image(&image_content, path, base_filename)
+                .generate_cover_image(&image_prompt, path, base_filename)
                 .await
             {
                 Ok(cover_filename) => {
@@ -465,7 +279,11 @@ async fn process_cover_image(
                         e
                     );
                     if !verbose {
-                        FORMATTER.print_warning(&FORMATTER.format_cover_failure());
+                        FORMATTER.print_warning(&format!(
+                            "{} {}",
+                            FORMATTER.format_cover_failure(),
+                            e
+                        ));
                     }
                     Ok(false)
                 }
@@ -479,7 +297,7 @@ async fn process_cover_image(
             }
 
             match backend
-                .generate_cover_image_to_path(&image_content, path, &target_cover_path)
+                .generate_cover_image_to_path(&image_prompt, path, &target_cover_path)
                 .await
             {
                 Ok(()) => {
@@ -497,7 +315,11 @@ async fn process_cover_image(
                         e
                     );
                     if !verbose {
-                        FORMATTER.print_warning(&FORMATTER.format_cover_failure());
+                        FORMATTER.print_warning(&format!(
+                            "{} {}",
+                            FORMATTER.format_cover_failure(),
+                            e
+                        ));
                     }
                     Ok(false)
                 }
@@ -685,13 +507,12 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_backend_gemini_missing_key() {
+    fn test_resolve_backend_gemini_uses_adc_without_key() {
         let frontmatter = Frontmatter::new(); // defaults to nb2
         let config = Config::new("app".into(), "secret".into(), None, None, false);
 
         let result = resolve_backend(&frontmatter, &config);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("GEMINI_API_KEY"));
+        assert!(matches!(result.unwrap(), ImageBackend::Gemini(_)));
     }
 
     #[test]

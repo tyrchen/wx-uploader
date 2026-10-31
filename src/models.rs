@@ -9,7 +9,7 @@ use std::env;
 
 /// Configuration for the wx-uploader application
 ///
-/// Contains all necessary API keys and settings for WeChat and OpenAI integration.
+/// Contains API keys and settings for WeChat, OpenAI, and Gemini integration.
 #[derive(Debug, Clone)]
 pub struct Config {
     /// WeChat application ID
@@ -18,7 +18,7 @@ pub struct Config {
     pub wechat_app_secret: String,
     /// Optional OpenAI API key for cover image generation
     pub openai_api_key: Option<String>,
-    /// Optional Gemini API key for cover image generation
+    /// Optional Gemini Developer API key; when absent, use Vertex AI with ADC
     pub gemini_api_key: Option<String>,
     /// Enable verbose logging
     pub verbose: bool,
@@ -35,6 +35,11 @@ impl Config {
     /// # Optional Environment Variables
     ///
     /// - `OPENAI_API_KEY`: OpenAI API key for cover image generation
+    /// - `GEMINI_API_KEY`: Explicit Gemini Developer API key (otherwise Vertex AI with ADC)
+    /// - `GOOGLE_CLOUD_PROJECT`: Vertex AI resource project (defaults to ADC quota project)
+    /// - `GOOGLE_CLOUD_LOCATION`: Vertex AI location (defaults to global)
+    /// - `GOOGLE_APPLICATION_CREDENTIALS`: Optional ADC credentials file
+    /// - `GOOGLE_CLOUD_QUOTA_PROJECT`: Optional ADC quota project override
     ///
     /// # Errors
     ///
@@ -141,9 +146,17 @@ pub struct Frontmatter {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cover: Option<String>,
 
+    /// Optional scene description. When nonempty, generate directly from it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_prompt: Option<String>,
+
+    /// Optional visual style for either explicit-scene or metadata-based generation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_style: Option<String>,
+
     /// Image generation model alias.
     ///
-    /// Available models: nb2 (default, Gemini Flash), nb (Gemini Pro), gpt (OpenAI)
+    /// Available models: nb2 (default, Gemini Nano Banana 2.1), nb (Gemini Pro), gpt (OpenAI)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 
@@ -160,8 +173,8 @@ pub struct Frontmatter {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
 
-    /// Description of the article.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    /// Description of the article; also accepts the frontmatter alias `desc`.
+    #[serde(default, alias = "desc", skip_serializing_if = "String::is_empty")]
     pub description: String,
 
     /// Captures any additional fields in the frontmatter that are not
@@ -499,6 +512,8 @@ mod tests {
             published: Some("draft".to_string()),
             description: "Test Article".to_string(),
             cover: Some("cover.png".to_string()),
+            cover_prompt: None,
+            cover_style: None,
             model: None,
             theme: Some("lapis".to_string()),
             code: Some("github".to_string()),

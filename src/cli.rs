@@ -102,7 +102,15 @@ pub fn print_colored_help() {
         "WECHAT_APP_SECRET".bright_cyan()
     );
     println!(
-        "{}: Set {} for automatic cover image generation",
+        "{}: Gemini cover generation uses Vertex AI with ADC (gcloud auth application-default login)",
+        "OPTIONAL".bright_blue().bold(),
+    );
+    println!(
+        "          Set {} for the Gemini Developer API (AI Studio); default model: nb2 (Nano Banana 2.1)",
+        "GEMINI_API_KEY".bright_cyan()
+    );
+    println!(
+        "{}: Set {} for OpenAI cover generation (model: gpt)",
         "OPTIONAL".bright_blue().bold(),
         "OPENAI_API_KEY".bright_cyan()
     );
@@ -133,7 +141,7 @@ pub fn print_colored_help() {
     );
     println!("  {}: \"draft\"", "published".bright_cyan());
     println!(
-        "  {}: \"cover.png\"     {} Auto-generated if missing with OpenAI",
+        "  {}: \"cover.png\"     {} Auto-generated if missing with AI",
         "cover".bright_cyan(),
         "#".bright_black()
     );

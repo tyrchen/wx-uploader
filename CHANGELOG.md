@@ -1,3 +1,16 @@
+## [0.8.0] - 2026-10-30
+
+### 🚀 Features
+
+- Use Vertex AI with automatically refreshed ADC credentials for Gemini cover generation
+- Default `nb2` to Nano Banana 2.1 with 1K output
+- Add `cover_prompt` and `cover_style` with separate scene and metadata prompt templates
+- Generate metadata-based covers from title, description, and tags without sending article content
+- Convert SVG image references to temporary PNGs before upload, including when the cover needs no crop
+- Match generated cover encoding to its filename and normalize existing mismatched covers before upload
+- Group upload copies and converted images in a private system temporary directory, preserving the original Markdown basename and resolving local images from the source directory
+- Bound WeChat digests to 120 UTF-16 units in the upload copy, including the ellipsis and YAML quoting; preserve source descriptions and safely generate missing digests
+
 ## [0.7.2] - 2026-10-10
 
 ### 🐛 Bug Fixes
