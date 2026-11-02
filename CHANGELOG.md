@@ -1,3 +1,10 @@
+## [0.9.2] - 2026-11-02
+
+### 🐛 Bug Fixes
+
+- Preserve code indentation and blank lines, keep code left-aligned, and improve wrapping and spacing on mobile WeChat.
+- Invalidate cached upload fingerprints when the code rendering changes.
+
 ## [0.9.1] - 2026-11-02
 
 ### 🚀 Features

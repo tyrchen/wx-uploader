@@ -1,0 +1,235 @@
+/*
+ *     Typora Theme - Lapis    /    Author - YiNN
+ *     https://github.com/YiNNx/typora-theme-lapis
+ */
+
+:root {
+    --text-color: #40464f;
+    --primary-color: #4870ac;
+    --bg-color: #ffffff;
+    --marker-color: #a2b6d4;
+    --source-color: #a8a8a9;
+    --header-span-color: var(--primary-color);
+    --block-bg-color: #f6f8fa;
+}
+
+#wepub {
+    color: var(--text-color);
+    font-family: var(--sans-serif-font);
+    line-height: 1.75;
+    font-size: 16px;
+}
+
+#wepub p,
+#wepub pre {
+    margin: 1em 0.8em;
+}
+
+#wepub strong {
+    color: var(--primary-color);
+}
+
+#wepub a {
+    word-wrap: break-word;
+    color: var(--primary-color);
+}
+
+#wepub p {
+    color: var(--text-color);
+}
+
+#wepub h4,
+#wepub h5,
+#wepub h6 {
+    font-weight: normal;
+}
+
+#wepub h1,
+#wepub h2,
+#wepub h3,
+#wepub h4,
+#wepub h5,
+#wepub h6 {
+    padding: 0px;
+    color: var(--primary-color);
+    margin: 1.2em 0 1em;
+}
+
+#wepub h1 {
+    text-align: center;
+}
+
+#wepub h2 {
+    padding: 1px 12.5px;
+    border-radius: 4px;
+    display: inline-block;
+}
+
+#wepub h2,
+#wepub h2 code {
+    background-color: var(--header-span-color);
+}
+
+#wepub h2,
+#wepub h2 a,
+#wepub h2 code,
+#wepub h2 strong {
+    color: var(--bg-color);
+}
+
+#wepub h1 {
+    font-size: 1.5em;
+}
+
+#wepub h2 {
+    font-size: 1.3em;
+}
+
+#wepub h3 {
+    font-size: 1.3em;
+}
+
+#wepub h4 {
+    font-size: 1.2em;
+}
+
+#wepub h5 {
+    font-size: 1.2em;
+}
+
+#wepub h6 {
+    font-size: 1.2em;
+}
+
+#wepub ul,
+#wepub ol {
+    margin: 1em 0.8em;
+    padding-left: 2em;
+}
+
+#wepub ul {
+    list-style-type: disc;
+}
+
+#wepub em {
+    padding: 0 3px 0 0;
+}
+
+#wepub ul ul {
+    list-style-type: square;
+}
+
+#wepub ol {
+    list-style-type: decimal;
+}
+
+#wepub ol li,
+#wepub ul li {
+    padding-left: 0.1em;
+}
+
+#wepub blockquote {
+    display: block;
+    font-size: 0.9em;
+    border-left: 3px solid var(--primary-color);
+    padding: 0.5em 1em;
+    margin: 0;
+    background: var(--block-bg-color);
+}
+
+#wepub p code {
+    color: var(--primary-color);
+    font-size: 0.9em;
+    font-weight: normal;
+    word-wrap: break-word;
+    padding: 2px 4px 2px;
+    border-radius: 3px;
+    margin: 2px;
+    background-color: var(--block-bg-color);
+    font-family: var(--monospace-font);
+    word-break: break-all;
+}
+
+#wepub img {
+    max-width: 100%;
+    max-width: 100%;
+    height: auto;
+    margin: 0 auto;
+    display: block;
+}
+
+#wepub table {
+    display: table;
+    text-align: justify;
+    overflow-x: auto;
+    border-collapse: collapse;
+    margin: 1.4em auto;
+    max-width: 100%;
+    table-layout: fixed;
+    text-align: left;
+    overflow: auto;
+    word-wrap: break-word;
+    word-break: break-all;
+}
+
+#wepub table th,
+#wepub table td {
+    border: 1px solid #d9dfe4;
+    padding: 9px 12px;
+    font-size: 0.75em;
+    line-height: 22px;
+    vertical-align: top;
+}
+
+#wepub table th {
+    text-align: center;
+    font-weight: bold;
+    color: var(--primary-color);
+    background: #f7f7f7;
+}
+
+#wepub hr {
+    margin-top: 20px;
+    margin-bottom: 20px;
+    border: 0;
+    border-top: 2px solid #eef2f5;
+    border-radius: 2px;
+}
+
+#wepub pre {
+    border-radius: 5px;
+    line-height: 2;
+    margin: 1em 0.5em;
+    padding: .5em;
+    box-shadow: rgba(0, 0, 0, 0.55) 0px 1px 5px;
+}
+
+#wepub pre code {
+    display: block;
+    overflow-x: auto;
+    margin: .5em;
+    padding: 0;
+    font-family: var(--monospace-font);
+}
+
+#wepub .footnote {
+    color: var(--primary-color);
+}
+
+#wepub #footnotes p {
+    display: flex;
+    margin: 0;
+    font-size: 0.9em;
+}
+
+#wepub .footnote-num {
+    display: inline;
+    width: 10%;
+}
+
+#wepub .footnote-txt {
+    display: inline;
+    width: 90%;
+    word-wrap: break-word;
+    word-break: break-all;
+}
