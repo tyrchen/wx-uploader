@@ -200,3 +200,60 @@ MIT
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Site configuration
+
+Place `wx-uploader.yaml` at your site root. The CLI discovers the nearest config
+in the input path's ancestors; `--config PATH` overrides discovery. Paths and
+content globs are relative to the config directory. Credentials stay in environment
+variables. Without a config, the existing frontmatter workflow is unchanged.
+
+For Astro-style sites such as QiaoPang:
+
+```yaml
+version: 1
+content:
+  include: ["src/posts/**/*.md"]
+images:
+  root: public
+  relative_to: root
+frontmatter:
+  title: title
+  description: excerpt
+  cover: cover
+cover:
+  mode: existing
+  fit: contain
+state:
+  storage: sidecar
+  path: .wx-uploader/state.json
+```
+
+Both `/images/a.svg` and `images/a.svg` resolve under `public/`. HTTP(S) body
+images retain their URL behavior. SVG covers and diagrams become temporary PNGs;
+WebP body images retain their format. `contain` pads the cover on white to 2.35:1
+instead of cropping text or artwork. `existing` fails on a missing cover and never
+calls an image generator.
+
+`sidecar` leaves articles and source images unchanged, ignores the site's
+`published` field, and records WeChat draft IDs by account and article path. A
+directory run skips unchanged articles; source, local image, or configuration
+changes create a new draft. Explicit single-file uploads are always forced.
+Changes to remote images alone are not detected. Add `.wx-uploader/` to your
+site's `.gitignore`; retain the directory locally for deduplication. State is locked
+across processes and saved atomically only after upload succeeds.
+
+```sh
+# Validate all selected articles without credentials, generation or upload
+wx-uploader --check /path/to/site
+# Upload one article using the automatically discovered site config
+wx-uploader /path/to/site/src/posts/2026/article.md
+# Upload all configured articles (the first run includes every selected article)
+wx-uploader /path/to/site
+```
+
+Offline checks require existing local covers and cannot fetch remote SVGs. Normal
+uploads may fetch remote SVGs. For full defaults, constraints and acceptance
+criteria, see [the site configuration spec](specs/site-config.md). Custom field
+mappings require sidecar state; sidecar state requires existing covers. Configs
+reject unknown keys and unsupported versions.

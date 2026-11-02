@@ -1,3 +1,16 @@
+## [0.9.0] - 2026-11-01
+
+### Features
+
+- Add discovered or explicit per-site YAML configuration, image roots, content globs, and frontmatter field mappings.
+- Reuse SVG covers without generation and preserve complete artwork with contain padding.
+- Track account-scoped WeChat drafts in an atomic, locked sidecar without rewriting site metadata.
+- Add credential-free `--check` validation for articles and local image preparation.
+
+### Bug Fixes
+
+- Propagate article read and parse errors instead of silently treating them as skipped files.
+
 ## [0.8.0] - 2026-10-31
 
 ### ⚙️ Miscellaneous Tasks
