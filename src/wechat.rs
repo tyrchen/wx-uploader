@@ -6,10 +6,12 @@
 use crate::error::{Error, Result};
 use crate::gemini::GeminiClient;
 use crate::image_prompt::build_cover_prompt;
-use crate::markdown::{parse_markdown_file, update_frontmatter, write_markdown_file};
+use crate::markdown::{parse_markdown_with_site, update_frontmatter, write_markdown_file};
 use crate::models::{Config, Frontmatter};
 use crate::openai::OpenAIClient;
 use crate::output::{FORMATTER, FilePathFormatter, OutputFormatter};
+use crate::site::{CoverMode, SiteConfig, resolve_image};
+use crate::state::{UploadState, fingerprint};
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 use walkdir::WalkDir;
@@ -18,7 +20,7 @@ use walkdir::WalkDir;
 pub use wechat_pub_rs::WeChatClient;
 
 pub use crate::upload_images::TempUploadFiles;
-use crate::upload_images::prepare_upload_files;
+use crate::upload_images::prepare_upload_files_with_site;
 
 /// Trait for uploading content to WeChat
 // async_trait adds #[must_use] to methods returning already-must-use boxed futures.
@@ -132,87 +134,125 @@ pub async fn process_directory(
     dir: &Path,
     verbose: bool,
 ) -> Result<()> {
-    let entries: Vec<_> = WalkDir::new(dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("md"))
-        .collect();
-
-    if entries.is_empty() {
-        FORMATTER.print_info("No markdown files found in directory");
-        return Ok(());
+    for path in select_files(dir, config.site.as_ref())? {
+        upload_file(client, config, &path, false, verbose).await?;
     }
-
-    for entry in entries {
-        upload_file(client, config, entry.path(), false, verbose).await?;
-    }
-
     Ok(())
 }
 
-/// Uploads a single markdown file to WeChat public account.
+fn select_files(input: &Path, site: Option<&SiteConfig>) -> Result<Vec<PathBuf>> {
+    if input.is_file() {
+        if !match site {
+            Some(site) => site.matches(input)?,
+            None => true,
+        } {
+            return Err(Error::config(format!(
+                "Article does not match content.include: {}",
+                input.display()
+            )));
+        }
+        return Ok(vec![input.to_path_buf()]);
+    }
+    let mut paths = Vec::new();
+    for entry in WalkDir::new(input) {
+        let entry = entry.map_err(|e| Error::generic(e.to_string()))?;
+        if entry.file_type().is_file()
+            && entry.path().extension().and_then(|s| s.to_str()) == Some("md")
+            && match site {
+                Some(site) => site.matches(entry.path())?,
+                None => true,
+            }
+        {
+            paths.push(entry.into_path());
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+async fn read_article(path: &Path, site: Option<&SiteConfig>) -> Result<(Frontmatter, String)> {
+    let content = tokio::fs::read_to_string(path).await?;
+    parse_markdown_with_site(&content, site)
+        .map_err(|error| Error::markdown_parse(path, error.to_string()))
+}
+
+fn require_cover(frontmatter: &Frontmatter, path: &Path, site: Option<&SiteConfig>) -> Result<()> {
+    let reference = frontmatter
+        .cover
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| Error::cover_image(path, "Existing cover required; no cover field found"))?;
+    let cover = resolve_image(site, &path.canonicalize()?, reference)?;
+    if !cover.is_file() {
+        return Err(Error::cover_image(
+            cover,
+            "Existing cover file not found; generation disabled",
+        ));
+    }
+    Ok(())
+}
+
+/// Prepare all selected articles without credentials, state changes, or upload.
+pub async fn check_path(input: &Path, site: Option<&SiteConfig>) -> Result<usize> {
+    let paths = select_files(input, site)?;
+    for path in &paths {
+        let (frontmatter, body) = read_article(path, site).await?;
+        require_cover(&frontmatter, path, site)?;
+        let _files = prepare_upload_files_with_site(path, &frontmatter, &body, site, true).await?;
+    }
+    Ok(paths.len())
+}
+
+/// Upload a single article; explicit files remain forced by the CLI.
 pub async fn upload_file(
-    client: &WeChatClient,
+    client: &impl WeChatUploader,
     config: &Config,
     path: &Path,
     force: bool,
     verbose: bool,
 ) -> Result<()> {
-    // Parse the markdown file and check publication status
-    let (mut frontmatter, body) = match parse_and_check_file(path, force, verbose).await {
-        Ok(result) => result,
-        Err(_) => return Ok(()), // File was skipped
-    };
-
-    // Handle cover image processing if needed
-    let cover_updated = process_cover_image(&mut frontmatter, path, config, verbose).await?;
-
-    // Save frontmatter if cover was updated
-    if cover_updated {
+    let site = config.site.as_ref();
+    select_files(path, site)?;
+    let sidecar = site.filter(|site| site.sidecar());
+    // Hold the state lock through the request, so concurrent processes cannot duplicate drafts.
+    let mut state = sidecar.map(UploadState::open).transpose()?;
+    let key = sidecar
+        .map(|site| UploadState::key(site, path))
+        .transpose()?;
+    let (mut frontmatter, body) = read_article(path, site).await?;
+    if sidecar.is_none() && !force && frontmatter.is_published() {
+        FORMATTER.print_skip(&FORMATTER.format_skip_published(path));
+        return Ok(());
+    }
+    if site.is_some_and(|site| site.cover.mode == CoverMode::Existing) {
+        require_cover(&frontmatter, path, site)?;
+    } else if process_cover_image(&mut frontmatter, path, config, verbose).await? {
         write_markdown_file(path, &frontmatter, &body).await?;
-        if verbose {
-            info!("Updated frontmatter with cover in: {}", path.display());
-        }
     }
-
-    // Keep the private upload directory alive for the entire request.
-    let temp_files = prepare_upload_files(path, &frontmatter, &body).await?;
-
-    // Execute the WeChat upload (display original path, upload from temp)
-    let upload_result =
-        execute_wechat_upload(client, temp_files.markdown.path(), path, verbose).await;
-
-    // Temp files are automatically cleaned up when temp_files is dropped
-    drop(temp_files);
-
-    // Propagate upload error after cleanup
-    upload_result?;
-
-    // Update the file with published status
-    update_published_status(path, verbose).await?;
-
+    let files = prepare_upload_files_with_site(path, &frontmatter, &body, site, false).await?;
+    let signature = match sidecar {
+        Some(site) => Some(fingerprint(path, site, &files).await?),
+        None => None,
+    };
+    if !force
+        && let (Some(state), Some(key), Some(signature)) = (&state, &key, &signature)
+        && state.unchanged(&config.wechat_app_id, key, signature)
+    {
+        FORMATTER.print_skip(&format!("unchanged: {}", path.display()));
+        return Ok(());
+    }
+    let draft_id = execute_wechat_upload(client, files.markdown.path(), path, verbose).await?;
+    if let Some(state) = &mut state {
+        state.save(
+            &config.wechat_app_id,
+            key.unwrap(),
+            signature.unwrap(),
+            draft_id,
+        )?;
+    } else {
+        update_published_status(path, verbose).await?;
+    }
     Ok(())
-}
-
-/// Parses markdown file and checks if it should be uploaded
-async fn parse_and_check_file(
-    path: &Path,
-    force: bool,
-    verbose: bool,
-) -> Result<(Frontmatter, String)> {
-    let (frontmatter, body) = parse_markdown_file(path).await?;
-
-    // Check if already published
-    if !force && frontmatter.is_published() {
-        if verbose {
-            info!("Skipping already published file: {}", path.display());
-        } else {
-            FORMATTER.print_skip(&FORMATTER.format_skip_published(path));
-        }
-        return Err(Error::generic("File already published"));
-    }
-
-    Ok((frontmatter, body))
 }
 
 /// Processes cover image generation and updating
@@ -222,8 +262,23 @@ async fn process_cover_image(
     config: &Config,
     verbose: bool,
 ) -> Result<bool> {
+    // Root-relative auto generation must save into the configured image root too.
+    if frontmatter.cover.is_none()
+        && config
+            .site
+            .as_ref()
+            .is_some_and(|site| site.images.relative_to == crate::site::RelativeTo::Root)
+    {
+        frontmatter.set_cover(format!(
+            "{}-{}.png",
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("article"),
+            uuid::Uuid::new_v4()
+        ));
+    }
     // Check if we need to generate at all
-    if !should_generate_cover(frontmatter, path, verbose).await {
+    if !should_generate_cover(frontmatter, path, config.site.as_ref(), verbose).await? {
         return Ok(false);
     }
 
@@ -290,7 +345,9 @@ async fn process_cover_image(
             }
         }
         Some(cover_filename) => {
-            let (target_cover_path, exists) = resolve_and_check_cover_path(path, cover_filename);
+            let target_cover_path =
+                resolve_image(config.site.as_ref(), &path.canonicalize()?, cover_filename)?;
+            let exists = target_cover_path.exists();
 
             if exists {
                 return Ok(false);
@@ -329,8 +386,13 @@ async fn process_cover_image(
 }
 
 /// Determines if a cover image should be generated
-async fn should_generate_cover(frontmatter: &Frontmatter, path: &Path, verbose: bool) -> bool {
-    match &frontmatter.cover {
+async fn should_generate_cover(
+    frontmatter: &Frontmatter,
+    path: &Path,
+    site: Option<&SiteConfig>,
+    verbose: bool,
+) -> Result<bool> {
+    Ok(match &frontmatter.cover {
         None => {
             if verbose {
                 info!("No cover image specified, generating one using AI...");
@@ -340,7 +402,8 @@ async fn should_generate_cover(frontmatter: &Frontmatter, path: &Path, verbose: 
             true
         }
         Some(cover_filename) => {
-            let (cover_path, exists) = resolve_and_check_cover_path(path, cover_filename);
+            let cover_path = resolve_image(site, &path.canonicalize()?, cover_filename)?;
+            let exists = cover_path.exists();
             if !exists {
                 if verbose {
                     info!(
@@ -363,7 +426,7 @@ async fn should_generate_cover(frontmatter: &Frontmatter, path: &Path, verbose: 
                 false
             }
         }
-    }
+    })
 }
 
 /// Executes the WeChat upload operation
@@ -371,7 +434,7 @@ async fn should_generate_cover(frontmatter: &Frontmatter, path: &Path, verbose: 
 /// `upload_path` is the actual file to upload (may be a temp file).
 /// `display_path` is the original file path shown to the user.
 async fn execute_wechat_upload(
-    client: &WeChatClient,
+    client: &impl WeChatUploader,
     upload_path: &Path,
     display_path: &Path,
     verbose: bool,

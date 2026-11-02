@@ -28,10 +28,18 @@ async fn main() -> Result<()> {
     // Display banner if verbose
     cli::display_banner(&args);
 
+    let site = wx_uploader::site::SiteConfig::load(&args.path, args.config.as_deref())?;
+    if args.check {
+        let count = wx_uploader::wechat::check_path(&args.path, site.as_ref()).await?;
+        println!("Checked {count} article(s); no uploads or source changes");
+        return Ok(());
+    }
+
     // Create configuration from environment variables
     let config = Config::from_env()
         .context("Failed to load configuration from environment variables")?
-        .with_verbose(args.verbose);
+        .with_verbose(args.verbose)
+        .with_site(site);
 
     // Create the uploader
     let uploader = WxUploader::new(config)

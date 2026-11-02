@@ -200,3 +200,58 @@ MIT
 ## 贡献
 
 欢迎贡献！请随时提交 Pull Request。
+
+## 站点配置
+
+在站点根目录放置 `wx-uploader.yaml`，程序会从输入文件或目录向父目录自动查找；
+也可通过 `--config PATH` 指定。配置中的路径和 glob 均相对配置文件所在目录，
+凭据仍从环境变量读取。不提供配置时沿用原有行为。
+
+适用于 qiaopang 等站点的示例：
+
+```yaml
+version: 1
+theme: lapis
+code: solarized-light
+content:
+  include: ["src/posts/**/*.md"]
+images:
+  root: public
+  relative_to: root
+frontmatter:
+  title: title
+  description: excerpt
+  cover: cover
+cover:
+  mode: existing
+  fit: contain
+state:
+  storage: sidecar
+  path: .wx-uploader/state.json
+```
+
+`theme` 和 `code` 是站点级默认值，文章 frontmatter 中的同名字段优先。
+两项均可省略，省略时沿用原有渲染默认值。
+
+`/images/a.svg` 和 `images/a.svg` 均从 `public/` 解析。SVG 封面和正文图在上传副本中
+转成 PNG，正文 WebP 保留原格式。`contain` 为封面补白到 2.35:1，保留标题和完整画面；
+`existing` 要求已有封面，缺失时报错，绝不调用生图。
+
+`sidecar` 不修改原文或图片，不使用网站的 `published` 判断微信状态，而是按公众号账号
+和文章路径独立记录草稿 ID。目录模式跳过内容未变的文章；原文、本地图片或配置变化后
+会新建草稿。单文件模式仍强制上传。远程图片单独发生变化不会触发重新上传。
+站点 `.gitignore` 应加入 `.wx-uploader/`，本地保留此目录以便去重。
+状态文件有进程锁，且仅在上传成功后原子写入。
+
+```sh
+# 无需凭据，检查全部文章及图片，不生图、不上传、不改状态
+wx-uploader --check ~/projects/cellis/qiaopang
+# 自动发现站点配置，强制上传单篇
+wx-uploader ~/projects/cellis/qiaopang/src/posts/2026/article.md
+# 上传配置选中的全部文章；首次运行会包含所有选中文章
+wx-uploader ~/projects/cellis/qiaopang
+```
+
+离线检查要求已有本地封面，遇到远程 SVG 会报错；正常上传可以下载远程 SVG。
+自定义字段映射要求 `sidecar` 状态，`sidecar` 要求已有封面。
+配置拒绝未知字段和不支持的版本。完整默认值和约束见[配置 spec](specs/site-config.md)。

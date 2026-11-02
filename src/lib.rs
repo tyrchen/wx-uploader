@@ -40,6 +40,8 @@ pub mod markdown;
 pub mod models;
 pub mod openai;
 pub mod output;
+pub mod site;
+mod state;
 mod upload_images;
 pub mod wechat;
 
@@ -148,6 +150,7 @@ mod tests {
             openai_api_key: None,
             gemini_api_key: None,
             verbose: false,
+            site: None,
         };
 
         // This would fail in real scenario without valid WeChat credentials,
@@ -169,3 +172,6 @@ mod tests {
         assert!(result.is_err());
     }
 }
+
+#[cfg(test)]
+mod site_tests;

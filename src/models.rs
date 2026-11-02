@@ -22,6 +22,8 @@ pub struct Config {
     pub gemini_api_key: Option<String>,
     /// Enable verbose logging
     pub verbose: bool,
+    /// Optional site-specific content settings.
+    pub site: Option<crate::site::SiteConfig>,
 }
 
 impl Config {
@@ -60,6 +62,7 @@ impl Config {
             openai_api_key,
             gemini_api_key,
             verbose: false, // Default to false, can be overridden by CLI
+            site: None,
         })
     }
 
@@ -77,7 +80,14 @@ impl Config {
             openai_api_key,
             gemini_api_key,
             verbose,
+            site: None,
         }
+    }
+
+    /// Attach site-specific content settings.
+    pub fn with_site(mut self, site: Option<crate::site::SiteConfig>) -> Self {
+        self.site = site;
+        self
     }
 
     /// Sets the verbose flag

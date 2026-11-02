@@ -28,6 +28,14 @@ pub struct Args {
     )]
     pub path: PathBuf,
 
+    /// Explicit site config (otherwise discover wx-uploader.yaml in ancestors)
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+
+    /// Validate files and images without credentials or uploading
+    #[arg(long)]
+    pub check: bool,
+
     /// Enable verbose logging with detailed tracing information
     #[arg(
         short,
@@ -74,6 +82,8 @@ pub fn print_colored_help() {
     println!("          for complete lists.");
     println!();
     println!("{}", "Options:".bright_yellow().bold());
+    println!("      --config <PATH>  Use an explicit site YAML configuration");
+    println!("      --check          Validate files/images without credentials or upload");
     println!(
         "  {}, {}  Enable verbose logging with detailed tracing information",
         "-v".bright_cyan(),
@@ -233,6 +243,8 @@ mod tests {
             path: file_path,
             verbose: false,
             clear_cache: false,
+            config: None,
+            check: false,
         };
 
         assert!(validate_args(&args).is_ok());
@@ -245,6 +257,8 @@ mod tests {
             path: temp_dir.path().to_path_buf(),
             verbose: false,
             clear_cache: false,
+            config: None,
+            check: false,
         };
 
         assert!(validate_args(&args).is_ok());
@@ -256,6 +270,8 @@ mod tests {
             path: PathBuf::from("nonexistent/path"),
             verbose: false,
             clear_cache: false,
+            config: None,
+            check: false,
         };
 
         assert!(validate_args(&args).is_err());
@@ -277,6 +293,8 @@ mod tests {
             path: temp_dir.path().to_path_buf(),
             verbose: true,
             clear_cache: false,
+            config: None,
+            check: false,
         };
 
         // This test mainly ensures the function doesn't panic
@@ -286,6 +304,8 @@ mod tests {
             path: temp_dir.path().to_path_buf(),
             verbose: false,
             clear_cache: false,
+            config: None,
+            check: false,
         };
 
         display_banner(&args);
@@ -298,6 +318,8 @@ mod tests {
             path: PathBuf::from("test.md"),
             verbose: true,
             clear_cache: false,
+            config: None,
+            check: false,
         };
 
         assert_eq!(args.path, PathBuf::from("test.md"));
