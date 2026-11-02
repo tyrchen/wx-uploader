@@ -14,6 +14,8 @@ before credentials/network initialization. Secrets remain in environment variabl
 
 ```yaml
 version: 1
+theme: lapis
+code: solarized-light
 content:
   include: ["src/posts/**/*.md"]
 images:
@@ -35,6 +37,13 @@ Defaults: empty include list means all Markdown; images.root is `.` and
 relative_to is `article`; field names are title/description/cover (legacy desc
 alias remains); cover.mode is `auto`, fit is `crop`; state.storage is
 `frontmatter`, path is `.wx-uploader/state.json`. Version is required and is 1.
+
+Optional top-level `theme` and `code` provide site-wide article defaults. Each
+field applies only when the corresponding article frontmatter value is absent
+or null, including articles without frontmatter. Explicit article values take
+precedence. Both fields use the same validation as article frontmatter; invalid
+config values fail during config loading. Omitting them preserves the existing
+rendering defaults. These values are included in sidecar configuration fingerprints.
 
 Root image mode resolves BOTH `/images/x.svg` and `images/x.svg` under images.root.
 It does not reinterpret HTTP(S) URLs. Reject paths escaping the configured image

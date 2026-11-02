@@ -8,6 +8,12 @@ use std::path::{Path, PathBuf};
 #[serde(deny_unknown_fields)]
 pub struct SiteConfig {
     pub version: u32,
+    /// Default article theme; explicit frontmatter takes precedence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
+    /// Default code highlighter; explicit frontmatter takes precedence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
     #[serde(default)]
     pub content: Content,
     #[serde(default)]
@@ -134,6 +140,12 @@ impl SiteConfig {
                 "Unsupported site config version (expected 1)",
             ));
         }
+        crate::models::Frontmatter {
+            theme: self.theme.clone(),
+            code: self.code.clone(),
+            ..Default::default()
+        }
+        .validate()?;
         self.includes()?;
         let pairs = [
             ("title", &self.frontmatter.title),
