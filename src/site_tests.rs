@@ -76,12 +76,55 @@ fn discovery_explicit_override_and_strict_validation() {
         "version: 1\nfrontmatter:\n  description: excerpt",
         "version: 1\nstate:\n  storage: sidecar",
         "version: 1\nfrontmatter:\n  title: published",
+        "version: 1\ntheme: invalid",
+        "version: 1\ncode: invalid",
+        "version: 1\ntheme: ''",
+        "version: 1\ncode: ''",
     ] {
         fs::write(&override_path, invalid).unwrap();
         assert!(
             SiteConfig::load(&article, Some(&override_path)).is_err(),
             "{invalid}"
         );
+    }
+}
+
+#[test]
+fn site_theme_defaults_and_article_overrides() {
+    let (dir, article, _) = fixture();
+    fs::write(
+        dir.path().join("wx-uploader.yaml"),
+        "version: 1\ntheme: lapis\ncode: solarized-light\n",
+    )
+    .unwrap();
+    let site = SiteConfig::load(&article, None).unwrap().unwrap();
+    for (content, theme, code) in [
+        ("body", "lapis", "solarized-light"),
+        ("---\ntitle: Test\n---\nbody", "lapis", "solarized-light"),
+        (
+            "---\ntheme: null\ncode: null\n---\nbody",
+            "lapis",
+            "solarized-light",
+        ),
+        ("---\ntheme: maize\n---\nbody", "maize", "solarized-light"),
+        ("---\ncode: github\n---\nbody", "lapis", "github"),
+        (
+            "---\ntheme: default\ncode: github\n---\nbody",
+            "default",
+            "github",
+        ),
+    ] {
+        let (frontmatter, body) = parse_markdown_with_site(content, Some(&site)).unwrap();
+        assert_eq!(frontmatter.theme.as_deref(), Some(theme));
+        assert_eq!(frontmatter.code.as_deref(), Some(code));
+        assert_eq!(body, "body");
+    }
+    assert!(parse_markdown_with_site("---\ntheme: invalid\n---\nbody", Some(&site)).is_err());
+    assert!(parse_markdown_with_site("---\ncode: invalid\n---\nbody", Some(&site)).is_err());
+    for site in [None, Some(serde_yaml::from_str("version: 1").unwrap())] {
+        let (frontmatter, _) = parse_markdown_with_site("body", site.as_ref()).unwrap();
+        assert!(frontmatter.theme.is_none());
+        assert!(frontmatter.code.is_none());
     }
 }
 
@@ -123,7 +166,9 @@ fn root_resolution_contains_paths_and_symlinks() {
 
 #[tokio::test]
 async fn qiaopang_upload_copy_preserves_source_and_entire_cover() {
-    let (dir, article, site) = fixture();
+    let (dir, article, mut site) = fixture();
+    site.theme = Some("lapis".into());
+    site.code = Some("solarized-light".into());
     let (frontmatter, body) = parse_markdown_with_site(ARTICLE, Some(&site)).unwrap();
     assert_eq!(frontmatter.description, "网站的摘要");
     assert!(frontmatter.is_published());
@@ -141,6 +186,8 @@ async fn qiaopang_upload_copy_preserves_source_and_entire_cover() {
         .await
         .unwrap();
     assert_eq!(parsed.description.as_deref(), Some("网站的摘要"));
+    assert_eq!(parsed.theme.as_deref(), Some("lapis"));
+    assert_eq!(parsed.code.as_deref(), Some("solarized-light"));
     assert_eq!(parsed.images.len(), 2);
     assert!(parsed.images[0].original_url.ends_with(".png"));
     assert!(parsed.images[1].original_url.ends_with(".webp"));

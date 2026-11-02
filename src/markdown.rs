@@ -71,7 +71,7 @@ pub fn parse_markdown_with_site(
     // Use (?s) flag to make . match newlines
     let re = Regex::new(r"(?s)^---\n(.*?)\n---\n(.*)$")?;
 
-    if let Some(captures) = re.captures(content) {
+    let (mut frontmatter, body) = if let Some(captures) = re.captures(content) {
         let yaml_str = captures.get(1).unwrap().as_str();
         let body = captures.get(2).unwrap().as_str();
 
@@ -104,15 +104,18 @@ pub fn parse_markdown_with_site(
         };
         let frontmatter: Frontmatter = serde_yaml::from_str(yaml_str)?;
 
-        // Validate the frontmatter
-        frontmatter.validate()?;
-
-        Ok((frontmatter, body.to_string()))
+        (frontmatter, body.to_string())
     } else {
         // No frontmatter, create default
         let frontmatter = Frontmatter::default();
-        Ok((frontmatter, content.to_string()))
+        (frontmatter, content.to_string())
+    };
+    if let Some(site) = site {
+        frontmatter.theme = frontmatter.theme.or_else(|| site.theme.clone());
+        frontmatter.code = frontmatter.code.or_else(|| site.code.clone());
     }
+    frontmatter.validate()?;
+    Ok((frontmatter, body))
 }
 
 /// Parses a markdown file from a file path

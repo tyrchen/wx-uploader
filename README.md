@@ -212,6 +212,8 @@ For Astro-style sites such as QiaoPang:
 
 ```yaml
 version: 1
+theme: lapis
+code: solarized-light
 content:
   include: ["src/posts/**/*.md"]
 images:
@@ -228,6 +230,9 @@ state:
   storage: sidecar
   path: .wx-uploader/state.json
 ```
+
+`theme` and `code` set site-wide defaults; article frontmatter overrides each
+field independently. Both are optional; omitting them keeps the existing rendering defaults.
 
 Both `/images/a.svg` and `images/a.svg` resolve under `public/`. HTTP(S) body
 images retain their URL behavior. SVG covers and diagrams become temporary PNGs;

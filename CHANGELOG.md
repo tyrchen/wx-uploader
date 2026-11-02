@@ -1,3 +1,10 @@
+## [0.9.1] - 2026-11-01
+
+### Features
+
+- Support site-wide `theme` and `code` defaults in `wx-uploader.yaml`, with per-article frontmatter overrides.
+- Validate configured themes and code highlighters before credential or network initialization.
+
 ## [0.9.0] - 2026-11-01
 
 ### Features

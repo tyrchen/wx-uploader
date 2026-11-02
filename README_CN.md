@@ -211,6 +211,8 @@ MIT
 
 ```yaml
 version: 1
+theme: lapis
+code: solarized-light
 content:
   include: ["src/posts/**/*.md"]
 images:
@@ -227,6 +229,9 @@ state:
   storage: sidecar
   path: .wx-uploader/state.json
 ```
+
+`theme` 和 `code` 是站点级默认值，文章 frontmatter 中的同名字段优先。
+两项均可省略，省略时沿用原有渲染默认值。
 
 `/images/a.svg` 和 `images/a.svg` 均从 `public/` 解析。SVG 封面和正文图在上传副本中
 转成 PNG，正文 WebP 保留原格式。`contain` 为封面补白到 2.35:1，保留标题和完整画面；
