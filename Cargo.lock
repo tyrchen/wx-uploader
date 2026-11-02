@@ -4419,7 +4419,9 @@ dependencies = [
 
 [[package]]
 name = "wechat-pub-rs"
-version = "0.7.0"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fccf9eb5b27bf0c892acdfd466346a5490e165f0c6c9bca7366c7ad8b48beef"
 dependencies = [
  "anyhow",
  "askama",
