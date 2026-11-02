@@ -60,24 +60,62 @@ use std::path::Path;
 /// assert_eq!(body, content);
 /// ```
 pub fn parse_markdown(content: &str) -> Result<(Frontmatter, String)> {
+    parse_markdown_with_site(content, None)
+}
+
+/// Parse site fields into canonical upload metadata without changing the source.
+pub fn parse_markdown_with_site(
+    content: &str,
+    site: Option<&crate::site::SiteConfig>,
+) -> Result<(Frontmatter, String)> {
     // Use (?s) flag to make . match newlines
     let re = Regex::new(r"(?s)^---\n(.*?)\n---\n(.*)$")?;
 
-    if let Some(captures) = re.captures(content) {
+    let (mut frontmatter, body) = if let Some(captures) = re.captures(content) {
         let yaml_str = captures.get(1).unwrap().as_str();
         let body = captures.get(2).unwrap().as_str();
 
+        let mapped;
+        let yaml_str = if let Some(site) = site {
+            let mut value: serde_yaml::Value = serde_yaml::from_str(yaml_str)?;
+            if let Some(map) = value.as_mapping_mut() {
+                let original = map.clone();
+                for (target, source) in [
+                    ("title", &site.frontmatter.title),
+                    ("description", &site.frontmatter.description),
+                    ("cover", &site.frontmatter.cover),
+                ] {
+                    if target != source {
+                        map.remove(serde_yaml::Value::String(target.into()));
+                        if target == "description" {
+                            map.remove(serde_yaml::Value::String("desc".into()));
+                        }
+                        if let Some(value) = original.get(serde_yaml::Value::String(source.clone()))
+                        {
+                            map.insert(serde_yaml::Value::String(target.into()), value.clone());
+                        }
+                    }
+                }
+            }
+            mapped = serde_yaml::to_string(&value)?;
+            &mapped
+        } else {
+            yaml_str
+        };
         let frontmatter: Frontmatter = serde_yaml::from_str(yaml_str)?;
 
-        // Validate the frontmatter
-        frontmatter.validate()?;
-
-        Ok((frontmatter, body.to_string()))
+        (frontmatter, body.to_string())
     } else {
         // No frontmatter, create default
         let frontmatter = Frontmatter::default();
-        Ok((frontmatter, content.to_string()))
+        (frontmatter, content.to_string())
+    };
+    if let Some(site) = site {
+        frontmatter.theme = frontmatter.theme.or_else(|| site.theme.clone());
+        frontmatter.code = frontmatter.code.or_else(|| site.code.clone());
     }
+    frontmatter.validate()?;
+    Ok((frontmatter, body))
 }
 
 /// Parses a markdown file from a file path

@@ -1,6 +1,6 @@
 [package]
 name = "wx-uploader"
-version = "0.9.0"
+version = "0.9.1"
 edition = "2024"
 authors = ["tyr.chen@gmail.com"]
 license = "MIT"
@@ -16,6 +16,8 @@ keywords = ["wechat", "weixin", "official-account", "uploader"]
 anyhow = "1"
 async-trait = "0.1"
 base64 = "0.22"
+blake3 = "1"
+globset = "0.4"
 clap = { version = "4", features = ["derive", "color", "help", "env"] }
 colored = "3"
 comrak = { version = "0.51", default-features = false }

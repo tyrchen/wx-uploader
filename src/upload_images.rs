@@ -4,7 +4,7 @@ use crate::error::{Error, Result};
 use crate::image_utils::encode_image;
 use crate::models::Frontmatter;
 use crate::output::{FORMATTER, OutputFormatter};
-use crate::wechat::resolve_and_check_cover_path;
+use crate::site::{CoverFit, SiteConfig, resolve_image};
 use comrak::{Arena, Options, nodes::NodeValue, parse_document};
 use image::ImageFormat;
 use resvg::{tiny_skia, usvg};
@@ -112,7 +112,11 @@ fn temp_image(bytes: &[u8], extension: &str, directory: &Path) -> Result<NamedTe
     Ok(file)
 }
 
-fn prepare_cover(path: &Path, directory: &Path) -> Result<Option<NamedTempFile>> {
+fn prepare_cover_with_fit(
+    path: &Path,
+    directory: &Path,
+    fit: CoverFit,
+) -> Result<Option<NamedTempFile>> {
     let original = std::fs::read(path)?;
     let format = image::guess_format(&original).ok();
     let bytes = if format.is_none() && is_svg(&path.to_string_lossy()) {
@@ -124,13 +128,40 @@ fn prepare_cover(path: &Path, directory: &Path) -> Result<Option<NamedTempFile>>
         .map_err(|e| Error::cover_image(path, format!("Failed to decode cover: {e}")))?;
     let ratio = image.width() as f64 / image.height() as f64;
     let expected = ImageFormat::from_path(path).ok();
-    let needs_crop = ratio < COVER_RATIO;
+    let needs_crop = match fit {
+        CoverFit::Crop => ratio < COVER_RATIO,
+        CoverFit::Contain => (ratio - COVER_RATIO).abs() > 0.01,
+    };
     let needs_conversion =
         expected != format || !matches!(format, Some(ImageFormat::Png | ImageFormat::Jpeg));
     if !needs_crop && !needs_conversion {
         return Ok(None);
     }
-    let image = if needs_crop {
+    let image = if needs_crop && fit == CoverFit::Contain {
+        let (width, height) = if ratio < COVER_RATIO {
+            (
+                (image.height() as f64 * COVER_RATIO).ceil() as u32,
+                image.height(),
+            )
+        } else {
+            (
+                image.width(),
+                (image.width() as f64 / COVER_RATIO).ceil() as u32,
+            )
+        };
+        let mut padded = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            width,
+            height,
+            image::Rgba([255, 255, 255, 255]),
+        ));
+        image::imageops::overlay(
+            &mut padded,
+            &image,
+            ((width - image.width()) / 2) as i64,
+            ((height - image.height()) / 2) as i64,
+        );
+        padded
+    } else if needs_crop {
         let height = ((image.width() as f64 / COVER_RATIO).round() as u32)
             .max(1)
             .min(image.height());
@@ -196,22 +227,35 @@ fn rewrite_images(body: &str, mapping: &HashMap<String, String>) -> Result<Strin
 }
 
 /// Rasterize SVG image references and normalize the cover before WeChat sees them.
+#[cfg(test)]
 pub(crate) async fn prepare_upload_files(
     markdown_path: &Path,
     frontmatter: &Frontmatter,
     body: &str,
 ) -> Result<TempUploadFiles> {
+    prepare_upload_files_with_site(markdown_path, frontmatter, body, None, false).await
+}
+
+pub(crate) async fn prepare_upload_files_with_site(
+    markdown_path: &Path,
+    frontmatter: &Frontmatter,
+    body: &str,
+    site: Option<&SiteConfig>,
+    offline: bool,
+) -> Result<TempUploadFiles> {
     let absolute = markdown_path.canonicalize()?;
-    let base_dir = absolute
-        .parent()
-        .ok_or_else(|| Error::generic("Markdown file has no parent"))?;
     let directory = tempfile::Builder::new().prefix("wx_upload_").tempdir()?;
     let cover_path = frontmatter
         .cover
         .as_ref()
-        .map(|filename| resolve_and_check_cover_path(&absolute, filename).0);
+        .map(|filename| resolve_image(site, &absolute, filename))
+        .transpose()?;
     let cover = if let Some(path) = cover_path.as_deref().filter(|path| path.exists()) {
-        prepare_cover(path, directory.path())?
+        prepare_cover_with_fit(
+            path,
+            directory.path(),
+            site.map_or(CoverFit::Crop, |site| site.cover.fit),
+        )?
     } else {
         None
     };
@@ -242,13 +286,21 @@ pub(crate) async fn prepare_upload_files(
         }
         if !is_svg(url) {
             if reference.is_local {
-                let source = base_dir.join(url);
+                let source = resolve_image(site, &absolute, url)?;
                 let bytes = std::fs::read(&source).map_err(|e| {
                     Error::generic(format!(
                         "Failed to read article image '{}': {e}",
                         source.display()
                     ))
                 })?;
+                if offline {
+                    image::load_from_memory(&bytes).map_err(|e| {
+                        Error::generic(format!(
+                            "Failed to decode article image '{}': {e}",
+                            source.display()
+                        ))
+                    })?;
+                }
                 let extension = source
                     .extension()
                     .and_then(|ext| ext.to_str())
@@ -261,12 +313,16 @@ pub(crate) async fn prepare_upload_files(
             continue;
         }
         let (bytes, resource_dir) = if reference.is_local {
-            let path = base_dir
-                .join(url)
+            let path = resolve_image(site, &absolute, url)?
                 .canonicalize()
                 .map_err(|e| Error::generic(format!("Failed to read SVG '{url}': {e}")))?;
             (std::fs::read(&path)?, path.parent().map(Path::to_path_buf))
         } else {
+            if offline {
+                return Err(Error::config(format!(
+                    "Cannot check remote SVG offline: {url}"
+                )));
+            }
             let response = http.get(url).send().await?.error_for_status()?;
             (response.bytes().await?.to_vec(), None)
         };
@@ -586,7 +642,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("cover.svg");
         fs::write(&path, SVG).unwrap();
-        let cover = prepare_cover(&path, dir.path()).unwrap().unwrap();
+        let cover = prepare_cover_with_fit(&path, dir.path(), CoverFit::Crop)
+            .unwrap()
+            .unwrap();
         assert_eq!(cover.path().extension().unwrap(), "png");
         assert_eq!(image::image_dimensions(cover.path()).unwrap(), (120, 51));
         assert_eq!(fs::read_to_string(path).unwrap(), SVG);
