@@ -4419,9 +4419,9 @@ dependencies = [
 
 [[package]]
 name = "wechat-pub-rs"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64940602da94291b69963817b3f0b8b7a1133d8cb4d2aa1db75c7a0fdca8edf1"
+checksum = "1fccf9eb5b27bf0c892acdfd466346a5490e165f0c6c9bca7366c7ad8b48beef"
 dependencies = [
  "anyhow",
  "askama",
@@ -4635,7 +4635,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "wx-uploader"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4651,6 +4651,7 @@ dependencies = [
  "regex",
  "reqwest 0.13.5",
  "resvg",
+ "scraper",
  "serde",
  "serde_json",
  "serde_yaml",

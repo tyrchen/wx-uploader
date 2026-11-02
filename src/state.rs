@@ -130,6 +130,8 @@ pub(crate) async fn fingerprint(
         hash.update(&(bytes.len() as u64).to_le_bytes());
         hash.update(bytes);
     };
+    // A rendering change must invalidate drafts even when the article is unchanged.
+    add(b"wechat-code-layout-v1");
     add(&std::fs::read(article)?);
     add(&serde_json::to_vec(site)?);
     let parsed = wechat_pub_rs::markdown::MarkdownParser::new()
