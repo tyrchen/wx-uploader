@@ -2,9 +2,7 @@
 
 ### 🐛 Bug Fixes
 
-- Preserve code indentation and blank lines, keep code left-aligned, and improve wrapping and spacing on mobile WeChat.
-- Invalidate cached upload fingerprints when the code rendering changes.
-
+- Use wechat-pub-rs 0.7.1 for code rendering and bump to 0.9.2 (#14)
 ## [0.9.1] - 2026-11-02
 
 ### 🚀 Features
